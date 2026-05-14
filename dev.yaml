@@ -1,0 +1,38 @@
+version: 1
+
+# Long-running per-op MCP servers. Agents are launched ad-hoc by run_demo.sh
+# (via separate `diagrid dev run --app-id <agent>` invocations) so we can
+# fire each role in sequence and produce the matrix.
+
+apps:
+  - appID: mcp-db-schema
+    appDirPath: .
+    appPort: 8002
+    command: ["uv", "run", "python", "servers/db_schema.py"]
+    env:
+      DB_USER: mcp_db_schema
+      DB_PASSWORD: schema_pw
+
+  - appID: mcp-db-query
+    appDirPath: .
+    appPort: 8001
+    command: ["uv", "run", "python", "servers/db_query.py"]
+    env:
+      DB_USER: mcp_db_query
+      DB_PASSWORD: query_pw
+
+  - appID: mcp-db-write
+    appDirPath: .
+    appPort: 8003
+    command: ["uv", "run", "python", "servers/db_write.py"]
+    env:
+      DB_USER: mcp_db_write
+      DB_PASSWORD: write_pw
+
+  - appID: mcp-db-ddl
+    appDirPath: .
+    appPort: 8004
+    command: ["uv", "run", "python", "servers/db_ddl.py"]
+    env:
+      DB_USER: mcp_db_ddl
+      DB_PASSWORD: ddl_pw

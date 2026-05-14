@@ -1,0 +1,9 @@
+# Pinned to 1.2.2 — see KNOWN_ISSUES.md.
+# The 1.3.0 stable of `agent-framework` ships an empty __init__.py that breaks
+# internal imports (observability.py expects `__version__` to be re-exported
+# from the meta-package init). 1.2.2 is the last known-good stable.
+agent-framework==1.2.2
+agent-framework-core==1.2.2
+agent-framework-openai==1.2.2
+httpx
+openai
