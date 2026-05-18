@@ -2,6 +2,12 @@
 # Creates the Catalyst project, App IDs, and configurations for the
 # secure-mcp demo. Idempotent — safe to re-run.
 #
+# Baseline policy state after this script: **everything denied**.
+# Use ./scripts/grant.sh (or ./scripts/up.sh) to open access progressively.
+#
+# Note: this script needs to update app-ids' --app-config, which is blocked
+# while a dev session is active. Run ./reset.sh first to clear sessions.
+#
 # Prereqs:
 #   - diagrid CLI installed and logged in (diagrid login)
 
@@ -13,6 +19,7 @@ PROJECT="${DIAGRID_PROJECT:-secure-mcp-demo}"
 
 echo "============================================"
 echo " secure-mcp setup — project: $PROJECT"
+echo " Baseline: deny-all on every per-op server"
 echo "============================================"
 
 # ── 1. Project ──────────────────────────────────────────────────────────────
@@ -23,10 +30,8 @@ diagrid project get "$PROJECT" > /dev/null 2>&1 \
 diagrid project use "$PROJECT"
 
 # ── 2. App IDs ──────────────────────────────────────────────────────────────
-# Per-op MCP server app-ids + per-role agent app-ids. The "one app-id per
-# operation" pattern is what lets us govern each tool independently.
 echo ""
-echo ">>> Creating App IDs"
+echo ">>> Creating App IDs (4 per-op servers + 3 agents)"
 APP_IDS=(
     mcp-db-schema
     mcp-db-query
@@ -42,44 +47,61 @@ for appid in "${APP_IDS[@]}"; do
 done
 
 # ── 3. Configurations ───────────────────────────────────────────────────────
-# Two configurations per per-op server: the "policy" we want for the demo,
-# plus a "permissive" sibling we can hot-swap to for live-grant moments.
+# One config per server op. Default-action: deny, no policies. Grants are
+# applied later via ./scripts/grant.sh which mutates these configs in place.
 echo ""
-echo ">>> Creating access control configurations"
-
+echo ">>> Creating deny-all configurations"
 _create_config() {
-    local name=$1; shift
+    local name=$1
     diagrid configuration get "$name" --project "$PROJECT" > /dev/null 2>&1 \
-        || diagrid configuration create "$name" --project "$PROJECT" "$@"
+        || diagrid configuration create "$name" --project "$PROJECT" --default-action deny
 }
+_create_config db-schema
+_create_config db-query
+_create_config db-write
+_create_config db-ddl
 
-# schema + query: all three agents allowed
-_create_config db-schema-allow --default-action allow
-_create_config db-query-allow  --default-action allow
-
-# write: ops and admin allowed, analyst denied
-_create_config db-write-restricted --default-action allow --policy analyst-agent:deny
-_create_config db-write-permissive  --default-action allow  # phase-3 swap target
-
-# ddl: admin only
-_create_config db-ddl-restricted --default-action allow \
-    --policy analyst-agent:deny --policy ops-agent:deny
-_create_config db-ddl-permissive --default-action allow  # phase-3 swap target
-
-# ── 4. Apply initial policies ───────────────────────────────────────────────
+# ── 4. Reset configs to deny-all (re-run idempotency) ───────────────────────
+# If a prior run left grants in place, force the configs back to deny-all.
+# We can't "clear policies" via the CLI, so we override every agent's entry
+# explicitly to :deny.
 echo ""
-echo ">>> Applying initial configurations to App IDs"
-diagrid appid update mcp-db-schema --project "$PROJECT" --app-config db-schema-allow
-diagrid appid update mcp-db-query  --project "$PROJECT" --app-config db-query-allow
-diagrid appid update mcp-db-write  --project "$PROJECT" --app-config db-write-restricted
-diagrid appid update mcp-db-ddl    --project "$PROJECT" --app-config db-ddl-restricted
+echo ">>> Forcing all configurations back to deny-all baseline"
+_deny_all() {
+    local config=$1
+    diagrid configuration update "$config" --project "$PROJECT" \
+        --default-action deny \
+        --policy analyst-agent:deny \
+        --policy ops-agent:deny \
+        --policy admin-agent:deny > /dev/null
+}
+_deny_all db-schema
+_deny_all db-query
+_deny_all db-write
+_deny_all db-ddl
+
+# ── 5. Apply configs to App IDs ─────────────────────────────────────────────
+echo ""
+echo ">>> Applying configurations to per-op App IDs"
+diagrid appid update mcp-db-schema --project "$PROJECT" --app-config db-schema
+diagrid appid update mcp-db-query  --project "$PROJECT" --app-config db-query
+diagrid appid update mcp-db-write  --project "$PROJECT" --app-config db-write
+diagrid appid update mcp-db-ddl    --project "$PROJECT" --app-config db-ddl
+
+# ── 6. Clean up legacy configs (from earlier iterations) ────────────────────
+echo ""
+echo ">>> Cleaning up legacy configurations (no-op if not present)"
+for legacy in db-schema-allow db-query-allow \
+              db-write-restricted db-write-permissive \
+              db-ddl-restricted db-ddl-permissive; do
+    diagrid configuration delete "$legacy" --project "$PROJECT" > /dev/null 2>&1 || true
+done
 
 echo ""
 echo "============================================"
-echo " Setup complete"
+echo " Setup complete — every operation is DENIED"
 echo "============================================"
 echo ""
-echo " Policy matrix:"
-echo "   analyst-agent  schema:✓  query:✓  write:✗  ddl:✗"
-echo "   ops-agent      schema:✓  query:✓  write:✓  ddl:✗"
-echo "   admin-agent    schema:✓  query:✓  write:✓  ddl:✓"
+echo " Next steps:"
+echo "   ./scripts/up.sh    # apply the canonical demo matrix"
+echo "   ./scripts/grant.sh <op> <agent>...   # progressive grants"

@@ -1,50 +1,57 @@
 #!/usr/bin/env bash
-# Live-grant access to a per-op MCP server by overriding the deny policies
-# on its Catalyst Configuration. The same config name (db-<op>-restricted)
-# stays attached to the app-id — no `diagrid appid update`, no dev-session
-# conflict.
+# Grant one or more agents access to a per-op MCP server.
 #
-# Diagrid's `configuration update --policy` overrides the existing entry
-# for that appId. We flip deny → allow.
+# Mutates the configuration in place via `diagrid configuration update`.
+# Each call sets `default-action: deny` (unchanged) and adds explicit
+# `<agent>-agent:allow` policy entries. Existing grants for *other* agents
+# on this config are preserved.
 #
 # Usage:
-#   ./scripts/grant.sh write    # analyst-agent can now invoke mcp-db-write
-#   ./scripts/grant.sh ddl      # analyst + ops can now invoke mcp-db-ddl
+#   ./scripts/grant.sh <op> <agent>...
 #
-# To revert: ./scripts/revoke.sh <op>
+#   op:    schema | query | write | ddl
+#   agent: analyst | ops | admin (one or more)
+#
+# Examples:
+#   ./scripts/grant.sh schema  analyst ops admin
+#   ./scripts/grant.sh write   ops admin
+#   ./scripts/grant.sh ddl     admin
 
 set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR/.."
 
-if [ $# -ne 1 ]; then
-    echo "Usage: $0 <write|ddl>" >&2
+PROJECT="${DIAGRID_PROJECT:-secure-mcp-demo}"
+
+if [ $# -lt 2 ]; then
+    echo "Usage: $0 <schema|query|write|ddl> <analyst|ops|admin>..." >&2
     exit 2
 fi
 
-OP=$1
-PROJECT="${DIAGRID_PROJECT:-secure-mcp-demo}"
+OP=$1; shift
+AGENTS=("$@")
 
 case "$OP" in
-    write)
-        CONFIG="db-write-restricted"
-        POLICIES=(--policy analyst-agent:allow)
-        DESCRIPTION="analyst-agent allowed"
-        ;;
-    ddl)
-        CONFIG="db-ddl-restricted"
-        POLICIES=(--policy analyst-agent:allow --policy ops-agent:allow)
-        DESCRIPTION="analyst-agent + ops-agent allowed"
-        ;;
-    *)
-        echo "ERROR: op must be 'write' or 'ddl' (schema/query are always allow)" >&2
-        exit 2 ;;
+    schema|query|write|ddl) ;;
+    *) echo "ERROR: op must be schema|query|write|ddl (got '$OP')" >&2; exit 2 ;;
 esac
 
-echo ">>> Granting access on mcp-db-${OP} (${DESCRIPTION})"
-echo "    diagrid configuration update ${CONFIG} --default-action allow ${POLICIES[*]}"
+POLICIES=()
+for agent in "${AGENTS[@]}"; do
+    case "$agent" in
+        analyst|ops|admin) POLICIES+=(--policy "${agent}-agent:allow") ;;
+        *) echo "ERROR: agent must be analyst|ops|admin (got '$agent')" >&2; exit 2 ;;
+    esac
+done
+
+CONFIG="db-${OP}"
+
+echo ">>> Granting [${AGENTS[*]}] access to mcp-db-${OP}"
+echo "    diagrid configuration update ${CONFIG} --default-action deny ${POLICIES[*]}"
 diagrid configuration update "$CONFIG" --project "$PROJECT" \
-    --default-action allow "${POLICIES[@]}"
+    --default-action deny "${POLICIES[@]}"
 
 echo ">>> Waiting 5s for policy propagation..."
 sleep 5
 
-echo ">>> Done. Re-run ./run_demo.sh analyst to see the flip."
+echo ">>> Done."

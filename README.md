@@ -5,8 +5,11 @@ Per-operation access control on MCP tool calls, enforced by Diagrid Catalyst.
 Three agents (`analyst`, `ops`, `admin`) with distinct identities probe four
 per-op MCP servers (`mcp-db-schema`, `mcp-db-query`, `mcp-db-write`,
 `mcp-db-ddl`). Catalyst configurations attached to each server app-id decide
-which agent identities can invoke which operation. The matrix output proves
-the policy is enforced:
+which agent identities can invoke which operation.
+
+**Secure by default:** after `./setup.sh`, every operation is denied for
+every agent. Access is granted progressively via `./scripts/grant.sh`
+during the demo. The canonical target matrix:
 
 ```
 [analyst-agent]   schema:✓  query:✓  write:✗ (403)  ddl:✗ (403)
@@ -84,34 +87,47 @@ interactive runs.
 
 ---
 
-## Hot-swap policies live
+## Granting + revoking access live
 
-The slick punchline: flip a config and watch a previously-denied call
-succeed. No agent change, no restart. Catalyst configs propagate in ~5s.
+After `./setup.sh` everything is denied. Open access progressively during
+the demo with `grant.sh`. Each call mutates the per-op Catalyst Configuration
+in place — no app-id changes, no dev-session teardown, ~5s propagation.
 
-Helper scripts (good for rehearsal):
 ```bash
-./scripts/grant.sh write       # everyone can now invoke mcp-db-write
-./run_demo.sh analyst          # write flips from ✗ to ✓
-./scripts/revoke.sh write      # back to restricted
-
-./scripts/grant.sh ddl         # everyone can now invoke mcp-db-ddl
-./run_demo.sh                  # full matrix, all ✓
-./scripts/revoke.sh ddl
+./scripts/grant.sh <op> <agent>...
+./scripts/grant.sh schema analyst ops admin
+./scripts/grant.sh query  analyst ops admin
+./scripts/grant.sh write  ops admin
+./scripts/grant.sh ddl    admin
 ```
 
-For the live demo, type the raw `diagrid` commands on screen so the
-audience sees the CLI:
+Revert specific grants:
 ```bash
-diagrid appid update mcp-db-write --project secure-mcp-demo --app-config db-write-permissive
-# wait 5s for propagation
-./run_demo.sh analyst
+./scripts/revoke.sh write analyst
+./scripts/revoke.sh ddl   admin
+```
 
-diagrid appid update mcp-db-write --project secure-mcp-demo --app-config db-write-restricted
+### Convenience scripts
+
+For rehearsal (or resetting state between runs) — apply / tear down the
+canonical demo matrix in one command each:
+
+```bash
+./scripts/up.sh         # canonical matrix (read for all, write for ops/admin, ddl for admin)
+./scripts/down.sh       # back to deny-all baseline
+```
+
+For the live demo, type the individual `./scripts/grant.sh ...` commands
+so the audience watches each capability being opened up. Or type the raw
+`diagrid` calls if you want the CLI itself on screen:
+
+```bash
+diagrid configuration update db-write --project secure-mcp-demo \
+    --default-action deny --policy ops-agent:allow --policy admin-agent:allow
 ```
 
 `run_demo.sh` takes an optional role arg (`analyst`, `ops`, or `admin`)
-so you can re-probe just one identity after a policy swap.
+so you can re-probe just one identity after a grant.
 
 ---
 

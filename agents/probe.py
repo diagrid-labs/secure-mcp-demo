@@ -30,18 +30,37 @@ PROBES = [
 ]
 
 
-def _why(exc: BaseException) -> str:
-    """Best-effort one-line summary of why a probe failed."""
-    for sub in [exc, *getattr(exc, "exceptions", [])]:
-        resp = getattr(sub, "response", None)
-        status = getattr(resp, "status_code", None)
-        if status:
-            return f"HTTP {status}"
-        if sub.__cause__:
-            inner = _why(sub.__cause__)
-            if inner != type(sub).__name__:
-                return inner
-    return type(exc).__name__
+def _why(exc, _seen=None):
+    """Best-effort one-line summary of why a probe failed.
+
+    Walks the full exception tree — direct exception, nested
+    BaseExceptionGroups, __cause__, and __context__ — looking for an
+    httpx response with a status code.
+    """
+    if exc is None:
+        return None
+    if _seen is None:
+        _seen = set()
+    if id(exc) in _seen:
+        return None
+    _seen.add(id(exc))
+
+    resp = getattr(exc, "response", None)
+    status = getattr(resp, "status_code", None)
+    if status:
+        return f"HTTP {status}"
+
+    for sub in getattr(exc, "exceptions", []):
+        found = _why(sub, _seen)
+        if found:
+            return found
+
+    for chained in (getattr(exc, "__cause__", None), getattr(exc, "__context__", None)):
+        found = _why(chained, _seen)
+        if found:
+            return found
+
+    return None
 
 
 async def probe_one(appid: str, tool: str, args: dict) -> tuple[bool, str]:
@@ -57,7 +76,7 @@ async def probe_one(appid: str, tool: str, args: dict) -> tuple[bool, str]:
     except BaseException as e:
         if isinstance(e, (KeyboardInterrupt, SystemExit)):
             raise
-        return False, _why(e)
+        return False, (_why(e) or type(e).__name__)
 
 
 GREEN = "\033[32m"

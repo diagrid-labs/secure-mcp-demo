@@ -1,41 +1,53 @@
 #!/usr/bin/env bash
-# Restore the deny policies on a per-op MCP server's Catalyst Configuration.
-# Pairs with scripts/grant.sh.
+# Revoke one or more agents' access to a per-op MCP server.
+#
+# Mutates the configuration in place — flips the named agent's policy entry
+# from `allow` to `deny`. Grants for *other* agents on this config are
+# preserved.
 #
 # Usage:
-#   ./scripts/revoke.sh write   # analyst denied again
-#   ./scripts/revoke.sh ddl     # analyst + ops denied again
+#   ./scripts/revoke.sh <op> <agent>...
+#
+#   op:    schema | query | write | ddl
+#   agent: analyst | ops | admin (one or more)
+#
+# Examples:
+#   ./scripts/revoke.sh write  analyst
+#   ./scripts/revoke.sh ddl    admin
 
 set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR/.."
 
-if [ $# -ne 1 ]; then
-    echo "Usage: $0 <write|ddl>" >&2
+PROJECT="${DIAGRID_PROJECT:-secure-mcp-demo}"
+
+if [ $# -lt 2 ]; then
+    echo "Usage: $0 <schema|query|write|ddl> <analyst|ops|admin>..." >&2
     exit 2
 fi
 
-OP=$1
-PROJECT="${DIAGRID_PROJECT:-secure-mcp-demo}"
+OP=$1; shift
+AGENTS=("$@")
 
 case "$OP" in
-    write)
-        CONFIG="db-write-restricted"
-        POLICIES=(--policy analyst-agent:deny)
-        DESCRIPTION="analyst-agent denied"
-        ;;
-    ddl)
-        CONFIG="db-ddl-restricted"
-        POLICIES=(--policy analyst-agent:deny --policy ops-agent:deny)
-        DESCRIPTION="analyst-agent + ops-agent denied"
-        ;;
-    *)
-        echo "ERROR: op must be 'write' or 'ddl'" >&2
-        exit 2 ;;
+    schema|query|write|ddl) ;;
+    *) echo "ERROR: op must be schema|query|write|ddl (got '$OP')" >&2; exit 2 ;;
 esac
 
-echo ">>> Restoring restricted policy on mcp-db-${OP} (${DESCRIPTION})"
-echo "    diagrid configuration update ${CONFIG} --default-action allow ${POLICIES[*]}"
+POLICIES=()
+for agent in "${AGENTS[@]}"; do
+    case "$agent" in
+        analyst|ops|admin) POLICIES+=(--policy "${agent}-agent:deny") ;;
+        *) echo "ERROR: agent must be analyst|ops|admin (got '$agent')" >&2; exit 2 ;;
+    esac
+done
+
+CONFIG="db-${OP}"
+
+echo ">>> Revoking [${AGENTS[*]}] access to mcp-db-${OP}"
+echo "    diagrid configuration update ${CONFIG} --default-action deny ${POLICIES[*]}"
 diagrid configuration update "$CONFIG" --project "$PROJECT" \
-    --default-action allow "${POLICIES[@]}"
+    --default-action deny "${POLICIES[@]}"
 
 echo ">>> Waiting 5s for policy propagation..."
 sleep 5
