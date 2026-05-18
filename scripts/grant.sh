@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # Grant one or more agents access to a per-op MCP server.
 #
-# Mutates the configuration in place via `diagrid configuration update`.
-# Each call sets `default-action: deny` (unchanged) and adds explicit
-# `<agent>-agent:allow` policy entries. Existing grants for *other* agents
-# on this config are preserved.
+# Reads the current configuration, sets the named agents' entries to
+# `allow`, and writes back with the full merged policy list. This is
+# additive — grants for *other* agents on the same config are preserved.
+# (`diagrid configuration update --policy` is a replace, not a merge, so
+# we have to round-trip through get → modify → update.)
 #
 # Usage:
 #   ./scripts/grant.sh <op> <agent>...
@@ -36,20 +37,32 @@ case "$OP" in
     *) echo "ERROR: op must be schema|query|write|ddl (got '$OP')" >&2; exit 2 ;;
 esac
 
-POLICIES=()
 for agent in "${AGENTS[@]}"; do
     case "$agent" in
-        analyst|ops|admin) POLICIES+=(--policy "${agent}-agent:allow") ;;
+        analyst|ops|admin) ;;
         *) echo "ERROR: agent must be analyst|ops|admin (got '$agent')" >&2; exit 2 ;;
     esac
 done
 
 CONFIG="db-${OP}"
 
+# Read current policies, override the named agents to allow, emit the
+# full merged --policy flag set.
+AGENTS_CSV=$(IFS=,; echo "${AGENTS[*]}")
+FLAGS=$(diagrid configuration get "$CONFIG" --project "$PROJECT" -o json | uv run python -c "
+import json, sys
+data = json.load(sys.stdin)
+policies = data.get('spec', {}).get('accessControl', {}).get('policies', []) or []
+state = {p['appId']: p['defaultAction'] for p in policies}
+for agent in sys.argv[1].split(','):
+    state[f'{agent}-agent'] = 'allow'
+print(' '.join(f'--policy {a}:{act}' for a, act in state.items()))
+" "$AGENTS_CSV")
+
 echo ">>> Granting [${AGENTS[*]}] access to mcp-db-${OP}"
-echo "    diagrid configuration update ${CONFIG} --default-action deny ${POLICIES[*]}"
+echo "    diagrid configuration update ${CONFIG} --default-action deny ${FLAGS}"
 diagrid configuration update "$CONFIG" --project "$PROJECT" \
-    --default-action deny "${POLICIES[@]}"
+    --default-action deny $FLAGS
 
 echo ">>> Waiting 5s for policy propagation..."
 sleep 5

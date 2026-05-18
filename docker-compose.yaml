@@ -14,3 +14,23 @@ services:
       interval: 2s
       timeout: 5s
       retries: 10
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:24.0
+    container_name: secure-mcp-keycloak
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+      # KC_HOSTNAME_URL must match the URL Catalyst's middleware fetches the
+      # JWKS from — this also becomes the `iss` claim Keycloak stamps on
+      # tokens. Defaults to localhost; override with
+      # `export KC_HOSTNAME_URL=https://...ngrok-url...` before
+      # `docker-compose up -d --force-recreate keycloak`.
+      KC_HOSTNAME_URL: ${KC_HOSTNAME_URL:-http://localhost:8080}
+      KC_HOSTNAME_STRICT: "false"
+      KC_HOSTNAME_STRICT_HTTPS: "false"
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./keycloak/realm-export.json:/opt/keycloak/data/import/realm.json:ro

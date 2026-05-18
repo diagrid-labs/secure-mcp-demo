@@ -1,0 +1,34 @@
+{
+  "realm": "secure-mcp",
+  "enabled": true,
+  "accessTokenLifespan": 15,
+  "ssoSessionIdleTimeout": 1800,
+  "clients": [
+    {
+      "clientId": "mcp-agent",
+      "name": "MCP Demo Agent (shared M2M client)",
+      "enabled": true,
+      "secret": "mcp-agent-secret",
+      "clientAuthenticatorType": "client-secret",
+      "serviceAccountsEnabled": true,
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "publicClient": false,
+      "fullScopeAllowed": true,
+      "protocolMappers": [
+        {
+          "name": "secure-mcp-demo-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.custom.audience": "https://secure-mcp-demo/",
+            "id.token.claim": "false",
+            "access.token.claim": "true"
+          }
+        }
+      ]
+    }
+  ]
+}

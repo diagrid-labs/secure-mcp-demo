@@ -1,0 +1,14 @@
+apiVersion: dapr.io/v1alpha1
+kind: Configuration
+metadata:
+  name: db-ddl
+spec:
+  accessControl:
+    defaultAction: deny
+    policies:
+      - appId: admin-agent
+        defaultAction: allow
+  appHttpPipeline:
+    handlers:
+      - name: bearer
+        type: middleware.http.bearer

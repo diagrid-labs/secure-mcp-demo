@@ -1,25 +1,44 @@
 # secure-mcp-demo
 
-Per-operation access control on MCP tool calls, enforced by Diagrid Catalyst.
+Per-operation access control on MCP tool calls, enforced by Diagrid Catalyst,
+with layered OIDC enforcement via Keycloak on destructive operations.
 
-Three agents (`analyst`, `ops`, `admin`) with distinct identities probe four
-per-op MCP servers (`mcp-db-schema`, `mcp-db-query`, `mcp-db-write`,
-`mcp-db-ddl`). Catalyst configurations attached to each server app-id decide
-which agent identities can invoke which operation.
+Three agents (`analyst`, `ops`, `admin`) with distinct Catalyst identities
+probe four per-op MCP servers (`mcp-db-schema`, `mcp-db-query`,
+`mcp-db-write`, `mcp-db-ddl`). Catalyst configurations control which
+identity can invoke which operation. The destructive op (`mcp-db-ddl`)
+additionally requires a valid Keycloak-issued JWT — step-up auth for
+high-risk operations.
 
 **Secure by default:** after `./setup.sh`, every operation is denied for
-every agent. Access is granted progressively via `./scripts/grant.sh`
-during the demo. The canonical target matrix:
+every agent. Access is granted progressively during the demo. The canonical
+target matrix:
 
 ```
 [analyst-agent]   schema:✓  query:✓  write:✗ (403)  ddl:✗ (403)
 [ops-agent]       schema:✓  query:✓  write:✓        ddl:✗ (403)
-[admin-agent]     schema:✓  query:✓  write:✓        ddl:✓
+[admin-agent]     schema:✓  query:✓  write:✓        ddl:✓ (with JWT)
 ```
 
-Defense in depth: each per-op MCP server connects to Postgres as its own DB
-role, so even if a Catalyst ACL is misconfigured, the DB role caps what the
+Admin's `ddl` requires both:
+1. Catalyst ACL allow (granted via `grant.sh ddl admin` or `up.sh`)
+2. Valid Keycloak JWT presented as `Authorization: Bearer …`
+
+Without the JWT, admin's ddl gets **HTTP 401 from the bearer middleware**
+— even though the ACL allows it. Two independent gates.
+
+Defense in depth: each per-op MCP server connects to Postgres as its own
+DB role. Even if all upstream layers fail, the DB role caps what the
 operation can actually execute.
+
+---
+
+## Running the demo
+
+**For the full presenter's walkthrough — pre-demo setup, the 8 beats in
+order, and reset between runs — see [DEMO.md](DEMO.md).**
+
+This README documents architecture, file layout, and individual scripts.
 
 ---
 
@@ -28,179 +47,183 @@ operation can actually execute.
 - Docker (or OrbStack)
 - `diagrid` CLI, logged in (`diagrid login`)
 - `uv` (`brew install uv`)
-- `OPENAI_API_KEY` available in env (only needed by LLM-driven scenes,
-  not by the matrix probe)
+- `ngrok` (free tier OK; needed to expose Keycloak to Catalyst's cloud edge)
 
 ---
 
-## One-time setup
+## Architecture
 
-```bash
-# 1. Install Python deps into a uv-managed venv
-uv venv
-uv pip install -r servers/requirements.txt
-uv pip install -r agents/requirements.txt
+```
+Agents (local)              Catalyst Cloud                MCP servers (local)
+────────────                ───────────────               ───────────────────
+analyst-agent ──┐                                        ┌─ mcp-db-schema
+ops-agent     ──┼─► dapr-api-token + ACL + bearer mw ──►├─ mcp-db-query
+admin-agent   ──┘   (3-layer cloud-side enforcement)     ├─ mcp-db-write
+                                                          └─ mcp-db-ddl
+                                                                │
+                                                                ▼
+                                                       Postgres (role-scoped
+                                                       DB users = floor)
 
-# 2. Start Postgres with seed data + role-scoped DB users
-docker-compose up -d
-
-# 3. Create Catalyst project, 7 app-ids, 6 configurations
-./setup.sh
+         Keycloak (local docker + ngrok) ──► issues JWTs that the
+                                              bearer middleware validates
 ```
 
-`setup.sh` is idempotent — safe to re-run if you change configs.
+Four enforcement layers, each independent:
+1. **Catalyst token verification** — confirms calling app-id (workload identity)
+2. **Catalyst ACL policies** — per-op authorization
+3. **Bearer middleware** — JWT signature/audience/issuer validation
+4. **Postgres role-scoped DB users** — last line of defense
+
+Three teams own them (platform, IAM, data). An attacker must defeat all four.
 
 ---
 
-## Run the matrix probe
+## File layout
 
-Two terminals.
-
-### Terminal 1 — long-running per-op MCP servers
-```bash
-diagrid dev run --project secure-mcp-demo -f dev.yaml
 ```
+setup.sh                      Catalyst + OIDC setup (one shot, idempotent)
+dev.yaml                      Dapr multi-app run file for 4 servers
+run_demo.sh                   Matrix probe runner. Supports --no-jwt flag.
+reset.sh                      Teardown stale dev sessions + orphan procs
+schema.sql                    Postgres tables + role-scoped DB users
+docker-compose.yaml           Postgres + Keycloak
 
-Wait for all four `✅ Connected App ID … to http://localhost:800X` lines.
+servers/
+  db_schema.py    db_query.py    db_write.py    db_ddl.py
+  common.py                   Postgres connection helper
+  test_all.py                 Standalone smoke test (no Catalyst)
+  requirements.txt
 
-### Terminal 2 — fire the three agents
-```bash
-./run_demo.sh
+agents/
+  probe.py                    Matrix probe harness (optionally fetches JWT)
+  agent.py                    LLM-driven scene script (legacy from step 2)
+  requirements.txt
+
+scripts/
+  up.sh                       Apply canonical demo matrix in one shot
+  down.sh                     Revoke everything — back to deny-all
+  grant.sh <op> <agent>...    Additive grant (preserves other agents)
+  revoke.sh <op> <agent>...   Additive revoke (preserves other agents)
+  show_identity.sh            Token fingerprints for all 7 app-ids
+  spoof.sh                    Catalyst-layer spoof attempts
+
+oauth2/
+  bearer-component.yaml       Dapr middleware Component (templated)
+  config-ddl-oauth.yaml       Catalyst Configuration with appHttpPipeline
+  setup.sh                    Re-apply OIDC layer (refresh JWKS cache)
+  teardown.sh                 Remove OIDC layer
+  spoof_oauth.sh              JWT-layer spoof attempts
+  admin_workflow.sh           End-to-end success: insert + delete real rows
+  admin_workflow.py           Admin's MCP calls (insert/delete actions)
+  inspect_token.sh            Decode a JWT, compare with JWKS
+  test_jwt.sh                 Single request with JWT, full HTTP response
+
+keycloak/
+  realm-export.json           Realm + shared M2M client + audience mapper
+
+DEMO.md                       Presenter's walkthrough (start here for demos)
+KNOWN_ISSUES.md               Upstream bugs and workarounds
+TODO.md                       Backlog (gitignored)
 ```
-
-All three matrix rows print back-to-back in a few seconds. No Ctrl+C, no
-reset needed.
-
-> **How it works:** `run_demo.sh` reads each agent's Catalyst API token
-> from `diagrid appid get` and calls `probe.py` directly with
-> `DAPR_HTTP_ENDPOINT` / `DAPR_API_TOKEN` in env — it does *not* wrap
-> each agent in `diagrid dev run`. Wrapping each one-shot agent in its
-> own dev session caused the server-side tunnels to break with "join
-> token already consumed" errors. The servers still run under
-> `diagrid dev run -f dev.yaml`, so Diagrid is the inbound/multi-app
-> showcase. See `KNOWN_ISSUES.md` for the full dig.
-
-For **live LLM-driven demo scenes** (a single agent making real decisions),
-use `diagrid dev run --app-id <agent>` interactively — Ctrl+C when the
-scene is done. The hang/cascade issue doesn't apply for one-shot
-interactive runs.
 
 ---
 
-## Granting + revoking access live
+## Individual script reference
 
-After `./setup.sh` everything is denied. Open access progressively during
-the demo with `grant.sh`. Each call mutates the per-op Catalyst Configuration
-in place — no app-id changes, no dev-session teardown, ~5s propagation.
+### Matrix probe
+
+```bash
+./run_demo.sh                       # all 3 agents, uses JWT if env vars set
+./run_demo.sh --no-jwt              # all 3 agents, ignore JWT (step-up beat)
+./run_demo.sh analyst               # single role
+./run_demo.sh --no-jwt analyst      # single role, no JWT
+```
+
+`run_demo.sh` reads each agent's Catalyst API token via `diagrid appid get`
+and calls `probe.py` directly with `DAPR_HTTP_ENDPOINT` /
+`DAPR_API_TOKEN` (+ optionally Keycloak vars) in env. It doesn't wrap each
+agent in its own `diagrid dev run` — wrapping caused server-side tunnel
+breakage (see [KNOWN_ISSUES.md](KNOWN_ISSUES.md)).
+
+For **live LLM-driven scenes** (a single agent making real decisions), use
+`diagrid dev run --app-id <agent>` interactively — Ctrl+C when done.
+
+### Granting + revoking (additive)
 
 ```bash
 ./scripts/grant.sh <op> <agent>...
-./scripts/grant.sh schema analyst ops admin
-./scripts/grant.sh query  analyst ops admin
-./scripts/grant.sh write  ops admin
-./scripts/grant.sh ddl    admin
+./scripts/revoke.sh <op> <agent>...
 ```
 
-Revert specific grants:
+Both read the current configuration, modify only the named agents' entries,
+and write back the full policy list. Other agents' entries are preserved.
+
+Convenience:
 ```bash
-./scripts/revoke.sh write analyst
-./scripts/revoke.sh ddl   admin
+./scripts/up.sh         # Apply canonical matrix (4 grant calls)
+./scripts/down.sh       # Back to deny-all baseline
 ```
 
-### Convenience scripts
-
-For rehearsal (or resetting state between runs) — apply / tear down the
-canonical demo matrix in one command each:
+### Identity + spoofs
 
 ```bash
-./scripts/up.sh         # canonical matrix (read for all, write for ops/admin, ddl for admin)
-./scripts/down.sh       # back to deny-all baseline
+./scripts/show_identity.sh          # 7 app-ids with token fingerprints
+./scripts/spoof.sh                  # 3 Catalyst-layer spoofs (no token / forged / wrong role)
+./oauth2/spoof_oauth.sh             # 3 OIDC-layer spoofs (no JWT / malformed / wrong audience)
 ```
 
-For the live demo, type the individual `./scripts/grant.sh ...` commands
-so the audience watches each capability being opened up. Or type the raw
-`diagrid` calls if you want the CLI itself on screen:
+### End-to-end destructive workflow (success path)
 
 ```bash
-diagrid configuration update db-write --project secure-mcp-demo \
-    --default-action deny --policy ops-agent:allow --policy admin-agent:allow
+./oauth2/admin_workflow.sh          # admin inserts + deletes a real row
 ```
 
-`run_demo.sh` takes an optional role arg (`analyst`, `ops`, or `admin`)
-so you can re-probe just one identity after a grant.
+Demonstrates both Catalyst ACL and OIDC bearer middleware accepting a
+legitimate request. Self-resetting (insert + delete on the same row).
 
 ---
 
-## Identity + spoof demonstrations
+## Refreshing OIDC layer
 
-Two more scripts for the "cryptographic identity" beat of the demo:
-
-```bash
-./scripts/show_identity.sh
-```
-
-Prints all seven app-ids with token prefixes + SHA-256 fingerprints —
-proves each identity is a unique Catalyst-issued credential, not a
-string in an ACL.
+If Keycloak rotates signing keys (e.g. after `docker-compose up -d --force-recreate keycloak`)
+or the ngrok URL changes, refresh the bearer Component so Catalyst re-fetches
+the JWKS:
 
 ```bash
-./scripts/spoof.sh
+export KEYCLOAK_PUBLIC_URL=https://...-new-url...
+./oauth2/setup.sh
 ```
 
-Runs three spoof attempts to show layered defenses:
-
-| Attempt | Token | Target | Expected | Why |
-|---|---|---|---|---|
-| No token | none | `mcp-db-query` | HTTP 401 | rejected at edge, before any policy |
-| Forged token | random string | `mcp-db-query` | HTTP 401 | token doesn't bind to any app-id |
-| Real analyst token, wrong role | `analyst-agent`'s real | `mcp-db-ddl` | HTTP 403 | caller IS analyst, ACL denies analyst |
-
-The point: an attacker can't escalate by mixing valid credentials with
-another role's claim. The token *is* the identity.
-
----
-
-## What's where
-
+OIDC debug helpers:
+```bash
+./oauth2/inspect_token.sh           # decode a fresh JWT, compare kid with JWKS
+./oauth2/test_jwt.sh                # single request with JWT, full response
 ```
-servers/
-  db_schema.py   (port 8002)  list_tables, describe_table
-  db_query.py    (port 8001)  query
-  db_write.py    (port 8003)  insert_employee, update_salary
-  db_ddl.py      (port 8004)  delete_employee, truncate_table
-  common.py                   pg connection from env
-  test_all.py                 standalone smoke test (no Catalyst)
-agents/
-  probe.py                    matrix-probe harness (used by run_demo.sh)
-  agent.py                    LLM-driven scene (single role, one task)
-schema.sql                    Postgres tables + role-scoped DB users
-docker-compose.yaml           Postgres
-setup.sh                      Catalyst project + app-ids + configs
-dev.yaml                      multi-app run file for the 4 servers
-run_demo.sh                   fires probe.py for each role
-KNOWN_ISSUES.md               upstream bugs we're working around
+
+To remove the OIDC layer entirely (revert to Catalyst-ACL-only):
+```bash
+./oauth2/teardown.sh
 ```
 
 ---
 
 ## Resetting state
 
-### Between demo runs (most common)
-
-If you re-run the demo and see HTTP 502 on calls that should pass, the
-Catalyst-side tunnel state is stuck from the prior run. Reset it:
+### Between demo runs
+If you see HTTP 502 on previously-working calls, Catalyst tunnel state is
+stuck:
 
 ```bash
-# Stop server-side dev session: Ctrl+C in Terminal 1, then:
+# Ctrl+C the diagrid dev run -f dev.yaml in Terminal 1, then:
 ./reset.sh
+diagrid dev run --project secure-mcp-demo -f dev.yaml
 ```
 
-Then start the servers again (`diagrid dev run -f dev.yaml`) and re-run
-`./run_demo.sh`. `reset.sh` only stops dev sessions — app-ids and
-configurations stay intact.
+`reset.sh` stops all stale dev sessions + kills orphan server processes
+on ports 8001–8004. App-ids and configurations stay intact.
 
 ### Full teardown
-
 ```bash
 diagrid project delete secure-mcp-demo
 docker-compose down -v

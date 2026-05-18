@@ -25,6 +25,15 @@ cd "$SCRIPT_DIR"
 
 PROJECT="${DIAGRID_PROJECT:-secure-mcp-demo}"
 
+# Parse optional --no-jwt flag (clears any KEYCLOAK_* env vars for this run,
+# useful for the "step-up auth" beat where you want to demonstrate the
+# middleware blocking a request that has Catalyst access but no JWT).
+NO_JWT=0
+if [ "${1:-}" = "--no-jwt" ]; then
+    NO_JWT=1
+    shift
+fi
+
 if [ $# -eq 0 ]; then
     ROLES=(analyst ops admin)
 elif [ $# -eq 1 ]; then
@@ -35,8 +44,12 @@ elif [ $# -eq 1 ]; then
             exit 2 ;;
     esac
 else
-    echo "Usage: $0 [analyst|ops|admin]" >&2
+    echo "Usage: $0 [--no-jwt] [analyst|ops|admin]" >&2
     exit 2
+fi
+
+if [ "$NO_JWT" = "1" ]; then
+    unset KEYCLOAK_URL KEYCLOAK_REALM KEYCLOAK_CLIENT_ID KEYCLOAK_CLIENT_SECRET
 fi
 
 _jq_path() {

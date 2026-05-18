@@ -1,19 +1,15 @@
 #!/usr/bin/env bash
 # Revoke one or more agents' access to a per-op MCP server.
 #
-# Mutates the configuration in place — flips the named agent's policy entry
-# from `allow` to `deny`. Grants for *other* agents on this config are
-# preserved.
+# Reads the current configuration, sets the named agents' entries to
+# `deny`, and writes back with the full merged policy list. Other agents'
+# entries are preserved.
 #
 # Usage:
 #   ./scripts/revoke.sh <op> <agent>...
 #
 #   op:    schema | query | write | ddl
 #   agent: analyst | ops | admin (one or more)
-#
-# Examples:
-#   ./scripts/revoke.sh write  analyst
-#   ./scripts/revoke.sh ddl    admin
 
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -34,20 +30,30 @@ case "$OP" in
     *) echo "ERROR: op must be schema|query|write|ddl (got '$OP')" >&2; exit 2 ;;
 esac
 
-POLICIES=()
 for agent in "${AGENTS[@]}"; do
     case "$agent" in
-        analyst|ops|admin) POLICIES+=(--policy "${agent}-agent:deny") ;;
+        analyst|ops|admin) ;;
         *) echo "ERROR: agent must be analyst|ops|admin (got '$agent')" >&2; exit 2 ;;
     esac
 done
 
 CONFIG="db-${OP}"
 
+AGENTS_CSV=$(IFS=,; echo "${AGENTS[*]}")
+FLAGS=$(diagrid configuration get "$CONFIG" --project "$PROJECT" -o json | uv run python -c "
+import json, sys
+data = json.load(sys.stdin)
+policies = data.get('spec', {}).get('accessControl', {}).get('policies', []) or []
+state = {p['appId']: p['defaultAction'] for p in policies}
+for agent in sys.argv[1].split(','):
+    state[f'{agent}-agent'] = 'deny'
+print(' '.join(f'--policy {a}:{act}' for a, act in state.items()))
+" "$AGENTS_CSV")
+
 echo ">>> Revoking [${AGENTS[*]}] access to mcp-db-${OP}"
-echo "    diagrid configuration update ${CONFIG} --default-action deny ${POLICIES[*]}"
+echo "    diagrid configuration update ${CONFIG} --default-action deny ${FLAGS}"
 diagrid configuration update "$CONFIG" --project "$PROJECT" \
-    --default-action deny "${POLICIES[@]}"
+    --default-action deny $FLAGS
 
 echo ">>> Waiting 5s for policy propagation..."
 sleep 5

@@ -13,12 +13,43 @@ import asyncio
 import os
 import sys
 
+import httpx
 from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
 
 AGENT_ROLE = os.environ.get("AGENT_ROLE", "analyst")
 DAPR_HTTP_ENDPOINT = os.environ["DAPR_HTTP_ENDPOINT"]
 DAPR_API_TOKEN = os.environ["DAPR_API_TOKEN"]
+
+# Optional OIDC: when all of these are set, the probe will fetch a JWT from
+# Keycloak via client_credentials and include it as Authorization: Bearer on
+# every MCP call. Required when the bearer middleware is active on a server.
+KEYCLOAK_URL = os.environ.get("KEYCLOAK_URL")
+KEYCLOAK_REALM = os.environ.get("KEYCLOAK_REALM")
+KEYCLOAK_CLIENT_ID = os.environ.get("KEYCLOAK_CLIENT_ID")
+KEYCLOAK_CLIENT_SECRET = os.environ.get("KEYCLOAK_CLIENT_SECRET")
+KEYCLOAK_AUDIENCE = os.environ.get("KEYCLOAK_AUDIENCE")
+
+
+def _fetch_jwt():
+    """Fetch a JWT from Keycloak via client_credentials. None if env not set."""
+    if not all([KEYCLOAK_URL, KEYCLOAK_REALM, KEYCLOAK_CLIENT_ID, KEYCLOAK_CLIENT_SECRET]):
+        return None
+    token_url = f"{KEYCLOAK_URL}/realms/{KEYCLOAK_REALM}/protocol/openid-connect/token"
+    resp = httpx.post(
+        token_url,
+        data={
+            "grant_type": "client_credentials",
+            "client_id": KEYCLOAK_CLIENT_ID,
+            "client_secret": KEYCLOAK_CLIENT_SECRET,
+        },
+        timeout=10,
+    )
+    resp.raise_for_status()
+    return resp.json()["access_token"]
+
+
+_JWT = _fetch_jwt()
 
 # One probe per per-op server. Args chosen to be no-op friendly so repeated
 # runs don't mutate state in surprising ways (update/delete of id 999999).
@@ -65,10 +96,11 @@ def _why(exc, _seen=None):
 
 async def probe_one(appid: str, tool: str, args: dict) -> tuple[bool, str]:
     url = f"{DAPR_HTTP_ENDPOINT}/v1.0/invoke/{appid}/method/mcp"
+    headers = {"dapr-api-token": DAPR_API_TOKEN}
+    if _JWT:
+        headers["Authorization"] = f"Bearer {_JWT}"
     try:
-        async with streamablehttp_client(
-            url, headers={"dapr-api-token": DAPR_API_TOKEN}
-        ) as (read, write, _):
+        async with streamablehttp_client(url, headers=headers) as (read, write, _):
             async with ClientSession(read, write) as session:
                 await session.initialize()
                 await session.call_tool(tool, args)
@@ -86,7 +118,8 @@ RESET = "\033[0m"
 
 
 async def main():
-    print(f"\n{BOLD}[{AGENT_ROLE}-agent]{RESET} probing 4 per-op MCP servers via Catalyst")
+    jwt_note = " (with Keycloak JWT)" if _JWT else ""
+    print(f"\n{BOLD}[{AGENT_ROLE}-agent]{RESET} probing 4 per-op MCP servers via Catalyst{jwt_note}")
     rows = []
     for appid, tool, args in PROBES:
         ok, why = await probe_one(appid, tool, args)
