@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Sends a single request to mcp-db-ddl with a freshly-fetched Keycloak JWT
+# Sends a single request to mcp-db-delete with a freshly-fetched Keycloak JWT
 # and admin-agent's Catalyst token. Prints full HTTP response including body
 # — useful for seeing the middleware's actual rejection reason.
 
@@ -27,9 +27,9 @@ ADMIN_TOKEN=$(diagrid appid get admin-agent --project "$PROJECT" -o json | \
 
 PAYLOAD='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"t","version":"0"}}}'
 
-echo ">>> Sending request to mcp-db-ddl with Catalyst token + Bearer JWT..."
+echo ">>> Sending request to mcp-db-delete with Catalyst token + Bearer JWT..."
 echo ""
-curl -i -X POST "$DAPR_ENDPOINT/v1.0/invoke/mcp-db-ddl/method/mcp" \
+curl -i -X POST "$DAPR_ENDPOINT/v1.0/invoke/mcp-db-delete/method/mcp" \
     -H "Content-Type: application/json" \
     -H "Accept: application/json, text/event-stream" \
     -H "dapr-api-token: $ADMIN_TOKEN" \

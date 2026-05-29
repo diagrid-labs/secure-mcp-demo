@@ -1,0 +1,22 @@
+{{- /*
+  Postgres init script — the bitnami/postgresql subchart mounts every key
+  in this ConfigMap into /docker-entrypoint-initdb.d/ on first boot,
+  which seeds the schema + per-op roles before any MCP server connects.
+
+  Wired by values.yaml:
+    postgresql.primary.initdb.scriptsConfigMap = secure-mcp-pg-init
+
+  files/schema.sql is a symlink to /schema.sql at the repo root — edits
+  there flow into the chart automatically.
+*/ -}}
+{{- if .Values.postgresql.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: secure-mcp-pg-init
+  labels:
+    {{- include "secure-mcp.labels" . | nindent 4 }}
+data:
+  schema.sql: |
+{{- .Files.Get "files/schema.sql" | nindent 4 }}
+{{- end }}

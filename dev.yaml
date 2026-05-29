@@ -5,14 +5,6 @@ version: 1
 # fire each role in sequence and produce the matrix.
 
 apps:
-  - appID: mcp-db-schema
-    appDirPath: .
-    appPort: 8002
-    command: ["uv", "run", "python", "servers/db_schema.py"]
-    env:
-      DB_USER: mcp_db_schema
-      DB_PASSWORD: schema_pw
-
   - appID: mcp-db-query
     appDirPath: .
     appPort: 8001
@@ -29,10 +21,10 @@ apps:
       DB_USER: mcp_db_write
       DB_PASSWORD: write_pw
 
-  - appID: mcp-db-ddl
+  - appID: mcp-db-delete
     appDirPath: .
     appPort: 8004
-    command: ["uv", "run", "python", "servers/db_ddl.py"]
+    command: ["uv", "run", "python", "servers/db_delete.py"]
     env:
-      DB_USER: mcp_db_ddl
-      DB_PASSWORD: ddl_pw
+      DB_USER: mcp_db_delete
+      DB_PASSWORD: delete_pw

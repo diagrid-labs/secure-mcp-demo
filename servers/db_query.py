@@ -1,8 +1,10 @@
 from mcp.server.fastmcp import FastMCP
 
-from common import get_connection
+from common import get_connection, heartbeat
 
 mcp = FastMCP("mcp-db-query", host="0.0.0.0", port=8001, stateless_http=True)
+
+SERVER = "mcp-db-query"
 
 
 @mcp.tool()
@@ -13,7 +15,9 @@ def query(sql: str) -> str:
             cur.execute(sql)
             cols = [d[0] for d in cur.description] if cur.description else []
             rows = cur.fetchall()
-            return str([dict(zip(cols, row)) for row in rows])
+            body = str([dict(zip(cols, row)) for row in rows])
+            heartbeat(SERVER, "query", {"sql": sql}, body=body)
+            return body
 
 
 if __name__ == "__main__":

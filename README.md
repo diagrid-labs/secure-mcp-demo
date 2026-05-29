@@ -4,32 +4,35 @@ Per-operation access control on MCP tool calls, enforced by Diagrid Catalyst,
 with layered OIDC enforcement via Keycloak on destructive operations.
 
 Three agents (`analyst`, `ops`, `admin`) with distinct Catalyst identities
-probe four per-op MCP servers (`mcp-db-schema`, `mcp-db-query`,
-`mcp-db-write`, `mcp-db-ddl`). Catalyst configurations control which
-identity can invoke which operation. The destructive op (`mcp-db-ddl`)
-additionally requires a valid Keycloak-issued JWT — step-up auth for
-high-risk operations.
+probe three per-op MCP servers (`mcp-db-query`, `mcp-db-write`,
+`mcp-db-delete`). Catalyst configurations control which identity can invoke
+which operation. The destructive op (`mcp-db-delete`) additionally requires
+a valid Keycloak-issued JWT — step-up auth for high-risk operations.
 
 **Secure by default:** after `./setup.sh`, every operation is denied for
 every agent. Access is granted progressively during the demo. The canonical
 target matrix:
 
 ```
-[analyst-agent]   schema:✓  query:✓  write:✗ (403)  ddl:✗ (403)
-[ops-agent]       schema:✓  query:✓  write:✓        ddl:✗ (403)
-[admin-agent]     schema:✓  query:✓  write:✓        ddl:✓ (with JWT)
+[analyst-agent]   query:✓  write:✗ (403)  delete:✗ (403)
+[ops-agent]       query:✓  write:✓        delete:✗ (403)
+[admin-agent]     query:✓  write:✓        delete:✓ (with JWT)
 ```
 
-Admin's `ddl` requires both:
-1. Catalyst ACL allow (granted via `grant.sh ddl admin` or `up.sh`)
+Admin's `delete` requires both:
+1. Catalyst ACL allow (granted via `grant.sh delete admin` or `up.sh`)
 2. Valid Keycloak JWT presented as `Authorization: Bearer …`
 
-Without the JWT, admin's ddl gets **HTTP 401 from the bearer middleware**
+Without the JWT, admin's delete gets **HTTP 401 from the bearer middleware**
 — even though the ACL allows it. Two independent gates.
 
 Defense in depth: each per-op MCP server connects to Postgres as its own
 DB role. Even if all upstream layers fail, the DB role caps what the
 operation can actually execute.
+
+A web UI for driving the demo lives in `ui_backend/` — see that directory
+for setup. The four-phase build is documented in conversation history;
+TL;DR: `cd ui_backend && ./run.sh`, then open `http://localhost:5050`.
 
 ---
 
@@ -56,10 +59,9 @@ This README documents architecture, file layout, and individual scripts.
 ```
 Agents (local)              Catalyst Cloud                MCP servers (local)
 ────────────                ───────────────               ───────────────────
-analyst-agent ──┐                                        ┌─ mcp-db-schema
-ops-agent     ──┼─► dapr-api-token + ACL + bearer mw ──►├─ mcp-db-query
-admin-agent   ──┘   (3-layer cloud-side enforcement)     ├─ mcp-db-write
-                                                          └─ mcp-db-ddl
+analyst-agent ──┐                                        ┌─ mcp-db-query
+ops-agent     ──┼─► dapr-api-token + ACL + bearer mw ──►├─ mcp-db-write
+admin-agent   ──┘   (3-layer cloud-side enforcement)     └─ mcp-db-delete
                                                                 │
                                                                 ▼
                                                        Postgres (role-scoped
@@ -70,7 +72,7 @@ admin-agent   ──┘   (3-layer cloud-side enforcement)     ├─ mcp-db-wri
 ```
 
 Four enforcement layers, each independent:
-1. **Catalyst token verification** — confirms calling app-id (workload identity)
+1. **Catalyst App Id (token verification)** — confirms calling app-id
 2. **Catalyst ACL policies** — per-op authorization
 3. **Bearer middleware** — JWT signature/audience/issuer validation
 4. **Postgres role-scoped DB users** — last line of defense
@@ -83,16 +85,15 @@ Three teams own them (platform, IAM, data). An attacker must defeat all four.
 
 ```
 setup.sh                      Catalyst + OIDC setup (one shot, idempotent)
-dev.yaml                      Dapr multi-app run file for 4 servers
+dev.yaml                      Dapr multi-app run file for 3 servers
 run_demo.sh                   Matrix probe runner. Supports --no-jwt flag.
 reset.sh                      Teardown stale dev sessions + orphan procs
 schema.sql                    Postgres tables + role-scoped DB users
 docker-compose.yaml           Postgres + Keycloak
 
 servers/
-  db_schema.py    db_query.py    db_write.py    db_ddl.py
-  common.py                   Postgres connection helper
-  test_all.py                 Standalone smoke test (no Catalyst)
+  db_query.py    db_write.py    db_delete.py
+  common.py                   Postgres connection helper + UI heartbeat hook
   requirements.txt
 
 agents/
@@ -105,12 +106,13 @@ scripts/
   down.sh                     Revoke everything — back to deny-all
   grant.sh <op> <agent>...    Additive grant (preserves other agents)
   revoke.sh <op> <agent>...   Additive revoke (preserves other agents)
-  show_identity.sh            Token fingerprints for all 7 app-ids
+  keepalive.sh                Keep diagrid dev tunnels warm during demos
+  show_identity.sh            Token fingerprints for all 6 app-ids
   spoof.sh                    Catalyst-layer spoof attempts
 
 oauth2/
   bearer-component.yaml       Dapr middleware Component (templated)
-  config-ddl-oauth.yaml       Catalyst Configuration with appHttpPipeline
+  config-delete-oauth.yaml       Catalyst Configuration with appHttpPipeline
   setup.sh                    Re-apply OIDC layer (refresh JWKS cache)
   teardown.sh                 Remove OIDC layer
   spoof_oauth.sh              JWT-layer spoof attempts
@@ -118,6 +120,22 @@ oauth2/
   admin_workflow.py           Admin's MCP calls (insert/delete actions)
   inspect_token.sh            Decode a JWT, compare with JWKS
   test_jwt.sh                 Single request with JWT, full HTTP response
+
+ui_backend/
+  main.py                     FastAPI server: /api/employees, /api/policy,
+                              /api/identity, /api/invoke, /api/events SSE
+  run.sh                      Launcher (uvicorn on :5050)
+  requirements.txt
+
+ui/                           Web UI served by ui_backend at /
+  index.html
+  src/{state,console,result,app,atoms}.jsx
+  src/styles.css
+  colors_and_type.css
+  assets/
+
+k8s/                          Kubernetes deployment (Helm + Dockerfiles).
+                              See k8s/README.md and k8s/CATALYST.md.
 
 keycloak/
   realm-export.json           Realm + shared M2M client + audience mapper

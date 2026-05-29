@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Creates the Catalyst project, App IDs, configurations, AND the OIDC
-# bearer middleware on mcp-db-ddl. Idempotent — safe to re-run.
+# bearer middleware on mcp-db-delete. Idempotent — safe to re-run.
 #
 # Baseline policy state after this script:
 #   - Every operation denied for every agent (deny-all on all four configs)
-#   - mcp-db-ddl additionally requires a valid Keycloak JWT once an agent
+#   - mcp-db-delete additionally requires a valid Keycloak JWT once an agent
 #     is granted ACL access — the bearer middleware is permanently wired in
 #
 # Prereqs:
@@ -30,7 +30,7 @@ export KEYCLOAK_AUDIENCE="${KEYCLOAK_AUDIENCE:-https://secure-mcp-demo/}"
 echo "============================================"
 echo " secure-mcp setup — project: $PROJECT"
 echo " Baseline: deny-all on every per-op server"
-echo " OIDC: bearer middleware on mcp-db-ddl"
+echo " OIDC: bearer middleware on mcp-db-delete"
 echo "============================================"
 echo " KEYCLOAK_PUBLIC_URL : $KEYCLOAK_PUBLIC_URL"
 echo " KEYCLOAK_REALM      : $KEYCLOAK_REALM"
@@ -46,12 +46,11 @@ diagrid project use "$PROJECT"
 
 # ── 2. App IDs ──────────────────────────────────────────────────────────────
 echo ""
-echo ">>> Creating App IDs (4 per-op servers + 3 agents)"
+echo ">>> Creating App IDs (3 per-op servers + 3 agents)"
 APP_IDS=(
-    mcp-db-schema
     mcp-db-query
     mcp-db-write
-    mcp-db-ddl
+    mcp-db-delete
     analyst-agent
     ops-agent
     admin-agent
@@ -69,33 +68,31 @@ _create_config() {
     diagrid configuration get "$name" --project "$PROJECT" > /dev/null 2>&1 \
         || diagrid configuration create "$name" --project "$PROJECT" --default-action deny
 }
-_create_config db-schema
 _create_config db-query
 _create_config db-write
-_create_config db-ddl
+_create_config db-delete
 
 # ── 4. Apply configs to App IDs ─────────────────────────────────────────────
 echo ""
 echo ">>> Applying configurations to per-op App IDs"
-diagrid appid update mcp-db-schema --project "$PROJECT" --app-config db-schema
 diagrid appid update mcp-db-query  --project "$PROJECT" --app-config db-query
 diagrid appid update mcp-db-write  --project "$PROJECT" --app-config db-write
-diagrid appid update mcp-db-ddl    --project "$PROJECT" --app-config db-ddl
+diagrid appid update mcp-db-delete    --project "$PROJECT" --app-config db-delete
 
-# ── 5. OIDC layer: bearer Component + middleware wired into db-ddl ──────────
+# ── 5. OIDC layer: bearer Component + middleware wired into db-delete ──────────
 echo ""
-echo ">>> Applying bearer Component (Keycloak JWT validator, scoped to mcp-db-ddl)"
+echo ">>> Applying bearer Component (Keycloak JWT validator, scoped to mcp-db-delete)"
 TMP_COMPONENT=$(mktemp /tmp/secure-mcp-bearer-XXXXXX.yaml)
 trap 'rm -f "$TMP_COMPONENT"' EXIT
 envsubst < oauth2/bearer-component.yaml > "$TMP_COMPONENT"
 diagrid apply --project "$PROJECT" -f "$TMP_COMPONENT"
 
 echo ""
-echo ">>> Wiring bearer middleware into db-ddl Configuration (appHttpPipeline)"
-diagrid apply --project "$PROJECT" -f oauth2/config-ddl-oauth.yaml
+echo ">>> Wiring bearer middleware into db-delete Configuration (appHttpPipeline)"
+diagrid apply --project "$PROJECT" -f oauth2/config-delete-oauth.yaml
 
 # ── 6. Reset configs to deny-all baseline (preserves appHttpPipeline) ───────
-# The config-ddl-oauth.yaml we just applied set db-ddl to admin-agent:allow.
+# The config-delete-oauth.yaml we just applied set db-delete to admin-agent:allow.
 # Force back to deny-all baseline; the appHttpPipeline (bearer middleware)
 # is preserved because `configuration update --policy` doesn't touch it.
 echo ""
@@ -108,10 +105,9 @@ _deny_all() {
         --policy ops-agent:deny \
         --policy admin-agent:deny > /dev/null
 }
-_deny_all db-schema
 _deny_all db-query
 _deny_all db-write
-_deny_all db-ddl
+_deny_all db-delete
 
 # ── 7. Clean up legacy configs (from earlier iterations) ────────────────────
 echo ""
@@ -128,7 +124,7 @@ echo " Setup complete"
 echo "============================================"
 echo ""
 echo " Catalyst:   deny-all on every per-op server"
-echo " OIDC:       bearer middleware on mcp-db-ddl (always-on)"
+echo " OIDC:       bearer middleware on mcp-db-delete (always-on)"
 echo ""
 echo " Next:"
 echo "   diagrid dev run --project $PROJECT -f dev.yaml"

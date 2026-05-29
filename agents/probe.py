@@ -1,7 +1,7 @@
 """Matrix probe agent.
 
 For the role given in AGENT_ROLE, attempt one tool call against each of the
-four per-op MCP servers via Catalyst. Print a ✓/✗ row showing which
+three per-op MCP servers via Catalyst. Print a ✓/✗ row showing which
 operations the role's identity is allowed to invoke.
 
 This is the deterministic verification harness — it does not use an LLM.
@@ -54,10 +54,9 @@ _JWT = _fetch_jwt()
 # One probe per per-op server. Args chosen to be no-op friendly so repeated
 # runs don't mutate state in surprising ways (update/delete of id 999999).
 PROBES = [
-    ("mcp-db-schema", "list_tables",    {}),
     ("mcp-db-query",  "query",          {"sql": "SELECT 1"}),
     ("mcp-db-write",  "update_salary",  {"employee_id": 999999, "new_salary": 100000}),
-    ("mcp-db-ddl",    "delete_employee", {"employee_id": 999999}),
+    ("mcp-db-delete",    "delete_employee", {"employee_id": 999999}),
 ]
 
 

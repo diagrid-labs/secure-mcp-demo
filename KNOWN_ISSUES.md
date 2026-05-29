@@ -76,7 +76,7 @@ Workarounds we tried, in order:
    another terminal. The next probe gets HTTP 502 (Catalyst can't reach
    upstream). Server-side terminal eventually prints:
    ```
-   failed to connect App ID "mcp-db-schema" ... workload identity join
+   failed to connect App ID "mcp-db-delete" ... workload identity join
    token already consumed — disconnect existing tunnel and retry
    ```
    The "join token" is one-shot; once an established tunnel dies, the same
@@ -180,7 +180,7 @@ SIGKILLed manually.
 `kill -9`s them after stopping dev sessions:
 
 ```bash
-for port in 8001 8002 8003 8004; do
+for port in 8001 8003 8004; do
     lsof -ti ":$port" | xargs kill -9
 done
 ```

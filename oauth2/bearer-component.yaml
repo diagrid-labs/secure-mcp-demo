@@ -13,4 +13,4 @@ spec:
     - name: audience
       value: "${KEYCLOAK_AUDIENCE}"
 scopes:
-  - mcp-db-ddl
+  - mcp-db-delete

@@ -1,7 +1,7 @@
 apiVersion: dapr.io/v1alpha1
 kind: Configuration
 metadata:
-  name: db-ddl
+  name: db-delete
 spec:
   accessControl:
     defaultAction: deny

@@ -1,0 +1,218 @@
+# ─── Image pull secrets (shared by all pods in the chart) ───────────────
+# Set when pulling from a registry that requires auth (or to lift Docker
+# Hub's anonymous rate limit). Each entry is the name of a Secret in the
+# install namespace.
+#   imagePullSecrets:
+#     - name: regcred
+# Make install can create the Secret + populate this from
+# DOCKERHUB_USERNAME / DOCKERHUB_PAT env vars.
+imagePullSecrets: []
+
+# ─── Ingress (single Azure LB via nginx-ingress) ─────────────────────────
+# One nginx-ingress controller (installed separately — see k8s/README.md)
+# fronts all five services. The chart emits one Ingress with five path
+# rules. The Catalyst egress allowlist is applied to the nginx-ingress
+# controller's Service, NOT to anything in this chart.
+ingress:
+  enabled: true
+  className: nginx
+  # The FQDN the nginx-ingress controller's Service resolves to. Set by
+  # `make install` from INGRESS_DNS_LABEL + AZURE_REGION, but you can
+  # override here for any real DNS name you point at the LB.
+  host: ""        # e.g. securemcp.eastus.cloudapp.azure.com
+  paths:
+    ui:       /         # everything not matched by another rule
+    keycloak: /keycloak
+    query:    /mcp/query
+    write:    /mcp/write
+    delete:   /mcp/delete
+
+# ─── MCP servers (3 deployments share one image) ─────────────────────────
+mcpServer:
+  image:
+    repository: secure-mcp-server   # override per environment
+    tag: dev
+    pullPolicy: IfNotPresent
+
+  # Per-server overrides. Same image; only command, port, and DB user vary.
+  # No publicDnsLabel — the ingress controller's single FQDN covers them.
+  servers:
+    query:
+      appId: mcp-db-query
+      command: ["python", "db_query.py"]
+      port: 8001
+      dbUser: mcp_db_query
+      dbPasswordSecret: mcp-db-passwords    # see secrets template
+      dbPasswordKey:    query
+    write:
+      appId: mcp-db-write
+      command: ["python", "db_write.py"]
+      port: 8003
+      dbUser: mcp_db_write
+      dbPasswordSecret: mcp-db-passwords
+      dbPasswordKey:    write
+    delete:
+      appId: mcp-db-delete
+      command: ["python", "db_delete.py"]
+      port: 8004
+      dbUser: mcp_db_delete
+      dbPasswordSecret: mcp-db-passwords
+      dbPasswordKey:    delete
+
+  service:
+    type: ClusterIP
+
+  resources:
+    requests: { cpu: 50m,  memory: 64Mi }
+    limits:   { cpu: 200m, memory: 256Mi }
+
+# ─── UI backend ──────────────────────────────────────────────────────────
+ui:
+  image:
+    repository: secure-mcp-ui
+    tag: dev
+    pullPolicy: IfNotPresent
+
+  port: 5050
+
+  resources:
+    requests: { cpu: 50m,  memory: 128Mi }
+    limits:   { cpu: 250m, memory: 512Mi }
+
+  service:
+    type: ClusterIP
+    port: 80
+    targetPort: 5050
+
+# ─── Catalyst integration ────────────────────────────────────────────────
+catalyst:
+  enabled: false
+  # Project + API key for the UI backend's control-plane calls
+  # (configuration get/update, appid get for token lookups).
+  project: secure-mcp-demo
+  apiKeySecret: catalyst-api-key   # Secret with key `apiKey`
+  # Data-plane endpoints — what the UI backend uses to invoke MCP servers
+  # via Catalyst. Set by `make install` from `diagrid project get`.
+  httpEndpoint: ""    # e.g. https://http-prj1429210.cloud.r1.diagrid.io:443
+  grpcEndpoint: ""    # e.g. grpc-prj1429210.cloud.r1.diagrid.io:443
+
+# ─── Per-op Postgres role passwords (demo defaults) ──────────────────────
+mcpDbPasswords:
+  query:  query_pw
+  write:  write_pw
+  delete: delete_pw
+
+# ─── Keycloak step-up auth (UI backend → Keycloak token endpoint) ────────
+keycloakClient:
+  realm: secure-mcp
+  clientId: mcp-agent
+  secret: mcp-agent-secret           # demo only; materialized into a Secret
+  clientSecretRef:
+    name: keycloak-client-credentials
+    key: clientSecret
+
+# ─── Shared Postgres credentials (top-level + keycloak's bundled one) ──
+# Two notes on the bitnami subchart's Secret layout:
+#   1. When auth.username is `postgres`, the chart writes the password into
+#      key `postgres-password` (not `password`) — which then breaks the
+#      keycloak chart's lookup. Use a non-postgres username so the chart
+#      writes a `password` key both subcharts can read.
+#   2. global.postgresql.auth.* propagates to every nested postgresql
+#      subchart, keeping credentials consistent and avoiding the
+#      "PASSWORDS ERROR" safety guard on upgrades.
+global:
+  postgresql:
+    auth:
+      username: mcp_app                  # not "postgres" — see note 1
+      password: demopassword             # demo only
+      postgresPassword: demopassword     # demo only (superuser)
+      database: demo
+
+# ─── bitnami/postgresql subchart ─────────────────────────────────────────
+# bitnami's free image catalog moved in 2024 — older specific tags moved
+# to docker.io/bitnamilegacy/*. Override the registry.
+postgresql:
+  enabled: true
+  image:
+    registry: docker.io
+    repository: bitnamilegacy/postgresql
+    tag: 17.6.0-debian-12-r4
+  auth:
+    username: mcp_app
+    password: demopassword
+    postgresPassword: demopassword
+    database: demo
+  primary:
+    initdb:
+      scriptsConfigMap: secure-mcp-pg-init
+
+# ─── bitnami/keycloak subchart ───────────────────────────────────────────
+# Keycloak is reachable under /keycloak on the shared ingress FQDN.
+# KC_HTTP_RELATIVE_PATH tells Keycloak to root all its URLs (including
+# OIDC discovery's `iss` claim) under that prefix.
+keycloak:
+  enabled: true
+  image:
+    registry: docker.io
+    repository: bitnamilegacy/keycloak
+  # bitnami's keycloak chart uses os-shell (or similar) as an init
+  # container to wait for Postgres. That image also moved to legacy.
+  volumePermissions:
+    image:
+      registry: docker.io
+      repository: bitnamilegacy/os-shell
+  # Use the chart's top-level Postgres for Keycloak too. Leaving the
+  # bundled Keycloak Postgres enabled renders a second subchart with the
+  # same fullname (`secure-mcp-postgresql`), causing StatefulSet/Service
+  # collisions and intermittent connection failures.
+  postgresql:
+    enabled: false
+    image:
+      registry: docker.io
+      repository: bitnamilegacy/postgresql
+  externalDatabase:
+    host: secure-mcp-postgresql
+    port: 5432
+    user: keycloak
+    database: keycloak
+    password: keycloak_pw
+  auth:
+    adminUser: admin
+    adminPassword: admin                  # demo only
+  production: false                       # start-dev, HTTP allowed
+  proxy: edge
+  # Native bitnami value — sets KC_HTTP_RELATIVE_PATH AND the readiness/
+  # liveness/startup probe paths together. Avoids the "probe hits / but
+  # Keycloak serves at /keycloak" mismatch.
+  # Bitnami's probe templates concatenate this with "realms/master", so it
+  # must keep the trailing slash.
+  httpRelativePath: "/keycloak/"
+  extraEnvVars:
+    - name: KC_HOSTNAME_STRICT
+      value: "false"
+    - name: KC_HOSTNAME_STRICT_HTTPS
+      value: "false"
+    - name: KC_HTTP_RELATIVE_PATH
+      value: "/keycloak/"
+    - name: KEYCLOAK_HOSTNAME
+      value: "http://localhost/keycloak"  # overridden by `make install`
+  service:
+    type: ClusterIP                       # behind the ingress
+
+  # The Bitnami Keycloak container already mounts a writable emptyDir at
+  # /tmp and its own writable data directory at /opt/bitnami/keycloak/data.
+  # Do not add extra mounts under either path: duplicate /tmp mounts fail
+  # validation, and mounting realm JSON under data/import can shadow the
+  # app-data subPath and make boot-time import silently import nothing.
+  # keycloakConfigCli below applies the realm through Keycloak's admin API.
+
+  keycloakConfigCli:
+    enabled: true
+    image:
+      registry: docker.io
+      repository: bitnamilegacy/keycloak-config-cli
+      tag: 6.1.6-debian-12-r3
+    existingConfigmap: secure-mcp-keycloak-realm
+    cleanupAfterFinished:
+      enabled: true
+      seconds: 600

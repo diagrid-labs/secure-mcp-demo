@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# Layer Keycloak/OIDC bearer enforcement on top of mcp-db-ddl. After this
-# runs, every call to mcp-db-ddl must present a valid JWT issued by the
+# Layer Keycloak/OIDC bearer enforcement on top of mcp-db-delete. After this
+# runs, every call to mcp-db-delete must present a valid JWT issued by the
 # Keycloak realm.
 #
 # Prereqs:
 #   - Catalyst project + app-ids exist (from running ./setup.sh)
 #   - Keycloak running locally (docker-compose up -d)
-#   - admin-agent already granted on mcp-db-ddl (e.g. ./scripts/up.sh)
+#   - admin-agent already granted on mcp-db-delete (e.g. ./scripts/up.sh)
 #
 # Environment:
 #   KEYCLOAK_PUBLIC_URL  — URL Catalyst's cloud-side middleware can reach
@@ -28,7 +28,7 @@ export KEYCLOAK_REALM="${KEYCLOAK_REALM:-secure-mcp}"
 export KEYCLOAK_AUDIENCE="${KEYCLOAK_AUDIENCE:-https://secure-mcp-demo/}"
 
 echo "============================================"
-echo " oauth2 setup — adding bearer middleware to mcp-db-ddl"
+echo " oauth2 setup — adding bearer middleware to mcp-db-delete"
 echo "============================================"
 echo " KEYCLOAK_PUBLIC_URL : $KEYCLOAK_PUBLIC_URL"
 echo " KEYCLOAK_REALM      : $KEYCLOAK_REALM"
@@ -40,22 +40,22 @@ if [[ "$KEYCLOAK_PUBLIC_URL" == *"localhost"* ]]; then
     echo " ⚠️  KEYCLOAK_PUBLIC_URL is localhost. If Catalyst's middleware"
     echo "     runs at the cloud edge it won't be able to reach Keycloak"
     echo "     here and JWT validation will silently fail open."
-    echo "     If you see admin still able to ddl without a JWT, run:"
+    echo "     If you see admin still able to delete without a JWT, run:"
     echo "         ngrok http 8080"
     echo "     and re-run this script with KEYCLOAK_PUBLIC_URL=<ngrok https URL>"
 fi
 
 echo ""
-echo ">>> Applying bearer Component (scoped to mcp-db-ddl)"
+echo ">>> Applying bearer Component (scoped to mcp-db-delete)"
 TMP_COMPONENT=$(mktemp /tmp/secure-mcp-bearer-XXXXXX.yaml)
 trap 'rm -f "$TMP_COMPONENT"' EXIT
 envsubst < oauth2/bearer-component.yaml > "$TMP_COMPONENT"
 diagrid apply --project "$PROJECT" -f "$TMP_COMPONENT"
 
 echo ""
-echo ">>> Updating db-ddl Configuration to include the bearer middleware"
+echo ">>> Updating db-delete Configuration to include the bearer middleware"
 echo "    (this preserves the existing ACL — admin-agent stays allowed)"
-diagrid apply --project "$PROJECT" -f oauth2/config-ddl-oauth.yaml
+diagrid apply --project "$PROJECT" -f oauth2/config-delete-oauth.yaml
 
 echo ""
 echo ">>> Waiting 5s for propagation..."
@@ -63,10 +63,10 @@ sleep 5
 
 echo ""
 echo "============================================"
-echo " OAuth2 enforcement is now active on mcp-db-ddl"
+echo " OAuth2 enforcement is now active on mcp-db-delete"
 echo "============================================"
 echo ""
-echo " Calls to mcp-db-ddl now require BOTH:"
+echo " Calls to mcp-db-delete now require BOTH:"
 echo "   - a valid Catalyst dapr-api-token (existing)"
 echo "   - a valid Bearer JWT from Keycloak (new)"
 echo ""

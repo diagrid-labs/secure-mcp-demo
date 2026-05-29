@@ -3,14 +3,14 @@
 #   1. Show DB state (5 rows)
 #   2. Admin inserts "Demo Target" via mcp-db-write
 #   3. Show DB state (6 rows — Demo Target visible)
-#   4. Admin deletes "Demo Target" via mcp-db-ddl (requires JWT)
+#   4. Admin deletes "Demo Target" via mcp-db-delete (requires JWT)
 #   5. Show DB state (5 rows — restored)
 #
 # Both operations require admin's Catalyst token. The delete additionally
 # requires a valid Keycloak JWT. Self-resetting — safe to re-run.
 #
 # Prereqs:
-#   - ./scripts/up.sh (admin granted on write + ddl)
+#   - ./scripts/up.sh (admin granted on write + delete)
 #   - Keycloak running and reachable; KEYCLOAK_* env vars set
 
 set -euo pipefail
@@ -52,6 +52,14 @@ printf "    ${DIM}Catalyst endpoint: $DAPR_HTTP_ENDPOINT${RESET}\n"
 printf "    ${DIM}Admin token:       ${DAPR_API_TOKEN:0:10}...${RESET}\n"
 printf "    ${DIM}Keycloak JWT:      ${KEYCLOAK_JWT:0:32}...${RESET}\n"
 
+# If a prior run inserted Demo Target but couldn't delete it (e.g. the
+# JWT layer rejected the delete call), the unique-email constraint blocks
+# this run's INSERT. Clear any stray row so BEFORE always shows the
+# canonical 5-row state.
+docker exec secure-mcp-postgres psql -U postgres demo -c \
+    "DELETE FROM employees WHERE email='demo-target@example.com';" \
+    >/dev/null 2>&1 || true
+
 echo ""
 printf "${BOLD}>>> Employees BEFORE${RESET}\n"
 _show_employees
@@ -67,7 +75,7 @@ printf "${BOLD}>>> Employees AFTER INSERT (Demo Target visible)${RESET}\n"
 _show_employees
 
 echo ""
-printf "${BOLD}>>> Admin deletes Demo Target via mcp-db-ddl...${RESET}\n"
+printf "${BOLD}>>> Admin deletes Demo Target via mcp-db-delete...${RESET}\n"
 printf "    ${DIM}(this call requires BOTH Catalyst ACL allow AND a valid Keycloak JWT)${RESET}\n"
 DELETE_RESP=$(uv run python oauth2/admin_workflow.py delete "$NEW_ID")
 echo "    $DELETE_RESP"
@@ -80,5 +88,5 @@ echo ""
 echo "============================================"
 echo " Both operations succeeded. Database state is restored."
 echo " - mcp-db-write inserted (Catalyst ACL allow)"
-echo " - mcp-db-ddl removed it (Catalyst ACL allow + valid Keycloak JWT)"
+echo " - mcp-db-delete removed it (Catalyst ACL allow + valid Keycloak JWT)"
 echo "============================================"

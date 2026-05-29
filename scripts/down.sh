@@ -11,10 +11,9 @@ echo "============================================"
 echo " Tearing down all grants — back to deny-all"
 echo "============================================"
 
-./scripts/revoke.sh schema  analyst ops admin
 ./scripts/revoke.sh query   analyst ops admin
 ./scripts/revoke.sh write   analyst ops admin
-./scripts/revoke.sh ddl     analyst ops admin
+./scripts/revoke.sh delete     analyst ops admin
 
 echo ""
 echo "============================================"

@@ -1,0 +1,32 @@
+secure-mcp installed in namespace {{ .Release.Namespace }}.
+
+{{- if .Values.ingress.enabled }}
+
+URLs (all on one Azure LB, fronted by nginx-ingress):
+  UI            http://{{ .Values.ingress.host }}/
+  Keycloak      http://{{ .Values.ingress.host }}/keycloak
+  mcp-db-query  http://{{ .Values.ingress.host }}/mcp/query
+  mcp-db-write  http://{{ .Values.ingress.host }}/mcp/write
+  mcp-db-delete http://{{ .Values.ingress.host }}/mcp/delete
+
+Verify ingress-nginx provisioned the LB:
+  kubectl -n ingress-nginx get svc ingress-nginx-controller
+
+{{- else }}
+
+Ingress is disabled. Reach the UI via port-forward:
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ .Release.Name }}-ui 5050:{{ .Values.ui.service.port }}
+  open http://localhost:5050
+
+{{- end }}
+
+Pods to watch:
+  kubectl -n {{ .Release.Namespace }} get pods -l app.kubernetes.io/instance={{ .Release.Name }}
+
+{{- if not .Values.catalyst.enabled }}
+
+WARNING: Catalyst integration is disabled (catalyst.enabled=false).
+The UI will render but /api/invoke calls will fail because the MCP server
+URLs aren't registered with Catalyst. Run `make register-appids` once the
+chart is healthy.
+{{- end }}

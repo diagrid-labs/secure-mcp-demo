@@ -9,7 +9,7 @@ Usage:
 
 Both calls go through Catalyst and require admin's Catalyst API token.
 The delete additionally requires a valid Keycloak JWT (the bearer
-middleware on mcp-db-ddl enforces it).
+middleware on mcp-db-delete enforces it).
 
 Env vars expected:
   DAPR_HTTP_ENDPOINT, DAPR_API_TOKEN, KEYCLOAK_JWT
@@ -64,7 +64,7 @@ async def insert() -> int:
 
 async def delete(employee_id: int) -> None:
     resp = await _call(
-        "mcp-db-ddl",
+        "mcp-db-delete",
         "delete_employee",
         {"employee_id": employee_id},
     )

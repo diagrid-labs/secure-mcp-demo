@@ -26,27 +26,32 @@ flow. If no → file the structural-cascade bug with diagrid eng (see
 The Ctrl+C workflow is fine for live demos (narration pauses fit), so
 this is backlog, not blocking.
 
-## Build a keepalive script if idle-disconnect bites during rehearsal
+## UI backend: replace `diagrid` CLI with REST calls
 
-Server-side tunnels from `diagrid dev run -f dev.yaml` go stale after
-extended idle (~20+ min observed). `diagrid dev status` still reports
-"ready" — misleading. Symptom: every allowed call returns HTTP 502;
-denied calls still 403 correctly (ACL runs at the edge, before the
-tunnel).
+`ui_backend/main.py` shells out to `diagrid` for control-plane operations
+(configuration get/update, appid get for tokens). Works but pulls a CLI
+binary into the Docker image (`k8s/docker/ui-backend.Dockerfile`),
+requires `DIAGRID_API_KEY` to be available to the pod shell, and
+inherits the CLI's version cadence.
 
-Recovery today: Ctrl+C terminal 1, `./reset.sh`, restart dev.yaml.
-Acceptable for live demo (no idle gap during recording), painful for
-rehearsal.
+Replace `subprocess.run(["diagrid", ...])` with `httpx` calls against
+`https://api.diagrid.io/...` using the same API key as a Bearer token.
+Drops the CLI install from the image and removes one moving part.
 
-If/when it bites during rehearsal, build `scripts/keepalive.sh`:
-- Loops every 30s
-- For each `mcp-db-{schema,query,write,ddl}`, sends an MCP `initialize`
-  through Catalyst using any agent's token (admin-agent is easy — has
-  access everywhere)
-- Background process — user starts when they begin rehearsing, kills
-  when done
-- Prints `(refreshed)` once per loop so it's visibly alive
+## K8s: decide Catalyst Cloud connection model + finish wiring
 
-Also worth filing with diagrid eng: `diagrid dev status` should reflect
-tunnel liveness, not just session existence. And ideally tunnels should
-self-restore or be kept warm by the CLI itself.
+`k8s/CATALYST.md` documents the trust model (Azure LB with
+`loadBalancerSourceRanges` allowlisting Catalyst's egress IPs). The
+`make register-appids` target uses a placeholder `--app-endpoint` flag
+that needs verification against current diagrid CLI before first deploy.
+
+Also: nginx-ingress variant of the chart for when a real domain is
+available — Ingress per server, single LB, cert-manager TLS. Not wired;
+documented as future-state in `k8s/CATALYST.md`.
+
+## Remove unused backend routes (or keep as escape hatches)
+
+`/api/policy/apply`, `/api/identity`, `/api/spoof` have no current UI
+consumer after the UI rework that removed the Policy panel, Identity
+drawer, and Adversarial scenarios row. They're kept for now as cheap
+scripting/debugging surface. Decide whether to keep or drop in a follow-up.

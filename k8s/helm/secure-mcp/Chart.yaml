@@ -1,0 +1,20 @@
+apiVersion: v2
+name: secure-mcp
+description: |
+  Demo deployment of the secure-mcp architecture: 3 per-operation MCP
+  servers + a UI backend, fronted by Diagrid Catalyst for per-app-id ACL
+  and OIDC-bearer JWT step-up auth on destructive ops.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+
+dependencies:
+  - name: postgresql
+    version: "15.5.x"
+    repository: https://charts.bitnami.com/bitnami
+    condition: postgresql.enabled
+
+  - name: keycloak
+    version: "22.x.x"
+    repository: https://charts.bitnami.com/bitnami
+    condition: keycloak.enabled

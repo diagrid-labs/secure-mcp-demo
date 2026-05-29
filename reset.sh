@@ -17,17 +17,16 @@ cd "$SCRIPT_DIR"
 PROJECT="${DIAGRID_PROJECT:-secure-mcp-demo}"
 
 APP_IDS=(
-    mcp-db-schema
     mcp-db-query
     mcp-db-write
-    mcp-db-ddl
+    mcp-db-delete
     analyst-agent
     ops-agent
     admin-agent
 )
 
 # Server ports — must match dev.yaml / servers/db_*.py
-SERVER_PORTS=(8001 8002 8003 8004)
+SERVER_PORTS=(8001 8003 8004)
 
 echo ">>> Stopping any active dev sessions for project: $PROJECT"
 for appid in "${APP_IDS[@]}"; do

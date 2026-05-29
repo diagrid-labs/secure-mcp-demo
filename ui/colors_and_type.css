@@ -1,0 +1,250 @@
+/* =========================================================
+   Diagrid Design System — Colors & Type
+   Source: Diagrid Brand Guidelines V4 (Figma) + 2026 Brand Guidelines PDF
+   ========================================================= */
+
+/* ---------- Webfonts ---------- */
+@import url('https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Outfit:wght@300;400;500;600;700;900&family=Geist+Mono:wght@400;500&display=swap');
+
+:root {
+  /* ===================== CORE BRAND COLORS ===================== */
+  /* Diagrid's identity rests on Teal as the single brand accent,
+     anchored by deep neutrals. White and Dark are the canvases. */
+  --diagrid-teal:        #41BD9B;   /* Brand primary — "Teal" */
+  --diagrid-teal-bright: #1EE2B4;   /* Brand accent / glow */
+  --diagrid-teal-soft:   #75FFDF;   /* Light highlight */
+  --diagrid-teal-deep:   #195E49;   /* Deep teal — backgrounds */
+  --diagrid-teal-darker: #005432;   /* Deepest brand green */
+
+  --diagrid-dark:        #1D1D1D;   /* Brand "Dark" — primary surface */
+  --diagrid-black:       #000000;
+  --diagrid-white:       #FFFFFF;
+
+  /* ===================== EXTENDED PALETTE ====================== */
+  /* Neutrals (grayscale) — used for chrome, dividers, body type */
+  --neutral-50:  #F8F8F8;
+  --neutral-100: #E0E0E0;
+  --neutral-200: #BDBDBD;
+  --neutral-300: #939393;
+  --neutral-400: #757575;
+  --neutral-500: #575757;
+  --neutral-600: #393939;
+  --neutral-700: #1D1D1D;
+  --neutral-800: #000000;
+
+  /* Teal scale */
+  --teal-50:  #DFF4EE;
+  --teal-100: #B0E2D4;
+  --teal-200: #7BD0B8;
+  --teal-300: #41BD9B;
+  --teal-400: #00A77E;
+  --teal-500: #009E76;
+  --teal-600: #009169;
+  --teal-700: #00805A;
+  --teal-800: #00704D;
+  --teal-900: #005432;
+
+  /* Green (success / Dapr-adjacent) */
+  --green-100: #C8E6CC;
+  --green-200: #A5D5AC;
+  --green-300: #81C68B;
+  --green-400: #66BA73;
+  --green-500: #449F51;
+  --green-600: #3A8D46;
+  --green-700: #317C3C;
+  --green-800: #1F5D29;
+
+  /* Red (alert / error) */
+  --red-100: #FFCEDA;
+  --red-200: #F29AA8;
+  --red-300: #EB7185;
+  --red-400: #FF3052;
+  --red-500: #F22750;
+  --red-600: #DF1B48;
+  --red-700: #C30034;
+
+  /* Gold (warn / highlight / data viz) */
+  --gold-100: #F9F3DB;
+  --gold-200: #F0E1A4;
+  --gold-300: #F0C75E;
+  --gold-400: #D6AC00;
+  --gold-500: #D09F00;
+  --gold-600: #D29300;
+  --gold-700: #D48100;
+
+  /* Orange (data viz / warm accent) */
+  --orange-100: #F7CBBA;
+  --orange-200: #F2AA8D;
+  --orange-300: #ED8A60;
+  --orange-400: #E85C17;
+  --orange-500: #DD5613;
+  --orange-600: #D0500E;
+
+  /* Blue (informational, secondary data viz) */
+  --blue-300: #46ABCC;
+  --blue-soft: #CDEEF9;
+  --blue-deep: #0D2192;
+
+  /* ===================== SEMANTIC TOKENS ===================== */
+  /* Light theme defaults */
+  --bg:           var(--diagrid-white);
+  --bg-elevated: #FFFFFF;
+  --bg-subtle:    var(--neutral-50);
+  --bg-inverse:   var(--diagrid-dark);
+  --bg-brand:     var(--diagrid-teal);
+  --bg-brand-deep: var(--diagrid-teal-deep);
+
+  --fg:           var(--diagrid-dark);    /* primary text */
+  --fg-muted:     var(--neutral-400);     /* secondary text */
+  --fg-subtle:    var(--neutral-300);
+  --fg-inverse:   var(--diagrid-white);
+  --fg-brand:     var(--diagrid-teal);
+  --fg-on-brand:  var(--diagrid-dark);    /* text ON the teal */
+
+  --border:        var(--neutral-100);
+  --border-strong: var(--neutral-200);
+  --border-brand:  var(--diagrid-teal);
+
+  --success: var(--green-500);
+  --warning: var(--gold-400);
+  --danger:  var(--red-500);
+  --info:    var(--blue-300);
+
+  /* Eyebrow / accent on dark surfaces (used in V4 "diagrid 2026" eyebrow) */
+  --eyebrow-on-dark: #7BD0B8;
+
+  /* ===================== TYPE SYSTEM =====================
+     Geist — Diagrid's primary typeface. Headings, hero titles, body.
+     Outfit — Secondary typeface; used for eyebrows, marketing display
+              and select callouts (note: V4 retires Outfit-as-primary).
+     Geist Mono — code, data, technical labels.
+  */
+  --font-display: 'Geist', 'Inter', system-ui, -apple-system, sans-serif;
+  --font-body:    'Geist', 'Inter', system-ui, -apple-system, sans-serif;
+  --font-marketing: 'Outfit', 'Geist', system-ui, sans-serif;
+  --font-mono:    'Geist Mono', 'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
+
+  /* Heading scale (deck-scale; 1920×1080 reference) */
+  --fs-display:  140px;  /* hero / cover title */
+  --fs-h1:        72px;
+  --fs-h2:        50px;
+  --fs-h3:        36px;
+  --fs-h4:        28px;
+  --fs-h5:        20px;
+  --fs-h6:        16px;
+  --fs-body:      18px;
+  --fs-body-sm:   14px;
+  --fs-caption:   12px;
+  --fs-eyebrow:   16px;
+  --fs-mono-md:   16px;
+
+  --lh-tight:    1.0;
+  --lh-snug:     1.1;
+  --lh-normal:   1.45;
+  --lh-relaxed:  1.6;
+
+  --tracking-tight:    -0.02em;
+  --tracking-normal:    0em;
+  --tracking-eyebrow:   0.10em;   /* spec'd: 10% letter spacing on eyebrows */
+  --tracking-cta:       0.06em;
+
+  --weight-light: 300;
+  --weight-regular: 400;
+  --weight-medium: 500;
+  --weight-semibold: 600;
+  --weight-bold: 700;
+
+  /* ===================== SPACING ===================== */
+  --space-0: 0;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+  --space-8: 64px;
+  --space-9: 96px;
+  --space-10: 128px;
+
+  /* ===================== RADIUS ===================== */
+  --radius-xs: 2px;     /* sharp edges in marketing */
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-pill: 999px;
+
+  /* ===================== SHADOWS ===================== */
+  --shadow-sm:  0 1px 2px rgba(0,0,0,0.06);
+  --shadow-md:  0 4px 12px rgba(0,0,0,0.08);
+  --shadow-lg:  0 12px 32px rgba(0,0,0,0.12);
+  --shadow-glow: 0 0 0 4px rgba(65,189,155,0.18);
+  --shadow-inner: inset 0 1px 0 rgba(255,255,255,0.06);
+}
+
+/* ---------- DARK THEME OVERRIDE ---------- */
+[data-theme="dark"] {
+  --bg:           var(--diagrid-dark);
+  --bg-elevated:  #2A2A2A;
+  --bg-subtle:    #232323;
+  --bg-inverse:   var(--diagrid-white);
+
+  --fg:           var(--diagrid-white);
+  --fg-muted:     #BDBDBD;
+  --fg-subtle:    #939393;
+  --fg-inverse:   var(--diagrid-dark);
+
+  --border:        rgba(255,255,255,0.1);
+  --border-strong: rgba(255,255,255,0.2);
+}
+
+/* ===================== ELEMENT DEFAULTS ===================== */
+body {
+  font-family: var(--font-body);
+  font-size: var(--fs-body);
+  line-height: var(--lh-normal);
+  color: var(--fg);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+h1, .h1 { font: var(--weight-semibold) var(--fs-h1)/var(--lh-snug) var(--font-display); letter-spacing: var(--tracking-tight); margin: 0; }
+h2, .h2 { font: var(--weight-semibold) var(--fs-h2)/var(--lh-snug) var(--font-display); letter-spacing: var(--tracking-tight); margin: 0; }
+h3, .h3 { font: var(--weight-semibold) var(--fs-h3)/var(--lh-snug) var(--font-display); margin: 0; }
+h4, .h4 { font: var(--weight-semibold) var(--fs-h4)/var(--lh-snug) var(--font-display); margin: 0; }
+h5, .h5 { font: var(--weight-medium)   var(--fs-h5)/1.3 var(--font-display); margin: 0; }
+h6, .h6 { font: var(--weight-medium)   var(--fs-h6)/1.3 var(--font-display); margin: 0; }
+
+p, .body { font: var(--weight-regular) var(--fs-body)/var(--lh-normal) var(--font-body); margin: 0; }
+.body-sm { font: var(--weight-regular) var(--fs-body-sm)/var(--lh-normal) var(--font-body); }
+.body-light { font-weight: var(--weight-light); line-height: 1.5; }
+.caption  { font: var(--weight-regular) var(--fs-caption)/1.4 var(--font-body); color: var(--fg-muted); }
+
+.eyebrow {
+  font: var(--weight-medium) var(--fs-eyebrow)/1 var(--font-display);
+  letter-spacing: var(--tracking-eyebrow);
+  text-transform: lowercase;   /* "diagrid 2026" lowercase eyebrow */
+  color: var(--diagrid-teal);
+}
+.eyebrow--upper {
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-eyebrow);
+}
+
+.cta {
+  font: var(--weight-bold) var(--fs-body)/1 var(--font-display);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-cta);
+}
+
+code, .mono { font-family: var(--font-mono); font-size: 0.95em; }
+pre {
+  font-family: var(--font-mono);
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: var(--space-4);
+  overflow: auto;
+}

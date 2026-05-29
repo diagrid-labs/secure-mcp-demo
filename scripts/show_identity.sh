@@ -13,10 +13,9 @@ cd "$SCRIPT_DIR/.."
 PROJECT="${DIAGRID_PROJECT:-secure-mcp-demo}"
 
 APPIDS=(
-    mcp-db-schema
     mcp-db-query
     mcp-db-write
-    mcp-db-ddl
+    mcp-db-delete
     analyst-agent
     ops-agent
     admin-agent

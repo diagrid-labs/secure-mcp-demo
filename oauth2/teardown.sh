@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Remove the bearer middleware from mcp-db-ddl. Reverts the db-ddl
+# Remove the bearer middleware from mcp-db-delete. Reverts the db-delete
 # Configuration to ACL-only (admin-agent allowed, no JWT requirement).
 
 set -euo pipefail
@@ -9,12 +9,12 @@ cd "$SCRIPT_DIR/.."
 PROJECT="${DIAGRID_PROJECT:-secure-mcp-demo}"
 
 echo "============================================"
-echo " oauth2 teardown — removing bearer middleware from mcp-db-ddl"
+echo " oauth2 teardown — removing bearer middleware from mcp-db-delete"
 echo "============================================"
 
 echo ""
-echo ">>> Restoring db-ddl Configuration to ACL-only (no appHttpPipeline)"
-diagrid configuration update db-ddl --project "$PROJECT" \
+echo ">>> Restoring db-delete Configuration to ACL-only (no appHttpPipeline)"
+diagrid configuration update db-delete --project "$PROJECT" \
     --default-action deny --policy admin-agent:allow
 
 echo ""
@@ -27,5 +27,5 @@ sleep 5
 
 echo ""
 echo "============================================"
-echo " OAuth2 enforcement removed from mcp-db-ddl"
+echo " OAuth2 enforcement removed from mcp-db-delete"
 echo "============================================"

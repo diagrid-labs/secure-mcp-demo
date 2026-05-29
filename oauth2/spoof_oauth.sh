@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Four spoof attempts against the bearer middleware on mcp-db-ddl:
+# Four spoof attempts against the bearer middleware on mcp-db-delete:
 #
 #   1. No JWT presented           → middleware rejects (missing token)
 #   2. Malformed JWT              → middleware rejects (signature invalid)
@@ -13,7 +13,7 @@
 # uses admin-agent's Catalyst token + tries a different JWT (or none).
 #
 # Prereqs:
-#   - ./scripts/up.sh (admin-agent allowed on mcp-db-ddl)
+#   - ./scripts/up.sh (admin-agent allowed on mcp-db-delete)
 #   - ./oauth2/setup.sh (bearer middleware active)
 #   - Keycloak running locally
 
@@ -32,7 +32,7 @@ DAPR_HTTP_ENDPOINT=$(diagrid project get "$PROJECT" -o json | \
 ADMIN_TOKEN=$(diagrid appid get admin-agent --project "$PROJECT" -o json | \
     uv run python -c "import json,sys; print(json.loads(sys.stdin.read()).get('status',{}).get('apiToken',''))")
 
-DDL_URL="$DAPR_HTTP_ENDPOINT/v1.0/invoke/mcp-db-ddl/method/mcp"
+DELETE_URL="$DAPR_HTTP_ENDPOINT/v1.0/invoke/mcp-db-delete/method/mcp"
 
 PAYLOAD='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"spoof-oauth","version":"0"}}}'
 
@@ -50,7 +50,7 @@ _call() {
     body_file=$(mktemp)
 
     local args=(-s -o "$body_file" -w "%{http_code}|%{content_type}"
-        -X POST "$DDL_URL"
+        -X POST "$DELETE_URL"
         -H "Content-Type: application/json"
         -H "Accept: application/json, text/event-stream"
         -H "dapr-api-token: $ADMIN_TOKEN")
@@ -80,7 +80,7 @@ _fetch_real_jwt() {
 }
 
 echo "============================================"
-echo " OAuth2 spoof attempts against mcp-db-ddl"
+echo " OAuth2 spoof attempts against mcp-db-delete"
 echo "============================================"
 echo " admin-agent has the Catalyst ACL allow."
 echo " Each attempt below uses admin-agent's real Catalyst token,"

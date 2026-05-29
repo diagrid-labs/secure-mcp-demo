@@ -33,26 +33,20 @@ INSERT INTO employees (name, email, department_id, salary, hired_on) VALUES
 -- caps what that operation can actually do.
 
 CREATE ROLE mcp_db_query  WITH LOGIN PASSWORD 'query_pw';
-CREATE ROLE mcp_db_schema WITH LOGIN PASSWORD 'schema_pw';
 CREATE ROLE mcp_db_write  WITH LOGIN PASSWORD 'write_pw';
-CREATE ROLE mcp_db_ddl    WITH LOGIN PASSWORD 'ddl_pw';
+CREATE ROLE mcp_db_delete WITH LOGIN PASSWORD 'delete_pw';
 
-GRANT CONNECT ON DATABASE demo TO mcp_db_query, mcp_db_schema, mcp_db_write, mcp_db_ddl;
-GRANT USAGE   ON SCHEMA public TO mcp_db_query, mcp_db_schema, mcp_db_write, mcp_db_ddl;
+GRANT CONNECT ON DATABASE demo TO mcp_db_query, mcp_db_write, mcp_db_delete;
+GRANT USAGE   ON SCHEMA public TO mcp_db_query, mcp_db_write, mcp_db_delete;
 
 -- query: SELECT only
 GRANT SELECT ON ALL TABLES IN SCHEMA public TO mcp_db_query;
-
--- schema: REFERENCES gives information_schema visibility (tables/columns)
--- without granting any data access. Tightest grant that still lets the role
--- introspect structure.
-GRANT REFERENCES ON ALL TABLES IN SCHEMA public TO mcp_db_schema;
 
 -- write: SELECT + INSERT + UPDATE (no DELETE, no DDL)
 GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA public TO mcp_db_write;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO mcp_db_write;
 
--- ddl: full owner over the schema
-GRANT ALL PRIVILEGES ON ALL TABLES    IN SCHEMA public TO mcp_db_ddl;
-GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO mcp_db_ddl;
-GRANT CREATE ON SCHEMA public TO mcp_db_ddl;
+-- delete: full owner over the schema (covers DELETE + any DDL the demo needs)
+GRANT ALL PRIVILEGES ON ALL TABLES    IN SCHEMA public TO mcp_db_delete;
+GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO mcp_db_delete;
+GRANT CREATE ON SCHEMA public TO mcp_db_delete;

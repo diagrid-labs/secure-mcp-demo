@@ -8,7 +8,7 @@
 # Usage:
 #   ./scripts/revoke.sh <op> <agent>...
 #
-#   op:    schema | query | write | ddl
+#   op:    query | write | delete
 #   agent: analyst | ops | admin (one or more)
 
 set -euo pipefail
@@ -18,7 +18,7 @@ cd "$SCRIPT_DIR/.."
 PROJECT="${DIAGRID_PROJECT:-secure-mcp-demo}"
 
 if [ $# -lt 2 ]; then
-    echo "Usage: $0 <schema|query|write|ddl> <analyst|ops|admin>..." >&2
+    echo "Usage: $0 <query|write|delete> <analyst|ops|admin>..." >&2
     exit 2
 fi
 
@@ -26,8 +26,8 @@ OP=$1; shift
 AGENTS=("$@")
 
 case "$OP" in
-    schema|query|write|ddl) ;;
-    *) echo "ERROR: op must be schema|query|write|ddl (got '$OP')" >&2; exit 2 ;;
+    query|write|delete) ;;
+    *) echo "ERROR: op must be query|write|delete (got '$OP')" >&2; exit 2 ;;
 esac
 
 for agent in "${AGENTS[@]}"; do

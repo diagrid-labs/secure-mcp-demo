@@ -1,0 +1,23 @@
+{{- /*
+  Keycloak realm import — the bitnami/keycloak subchart's
+  keycloakConfigCli Job mounts this ConfigMap at /config and applies the
+  realm through Keycloak's admin API after the server is reachable.
+
+  Do not mount this into /opt/bitnami/keycloak/data/import on the main
+  Keycloak container. That path is owned by the Bitnami app-data mount,
+  and overlaying it can make the boot-time import silently import nothing.
+
+  files/realm-export.json is a symlink to /keycloak/realm-export.json
+  at the repo root — edits there flow into the chart automatically.
+*/ -}}
+{{- if .Values.keycloak.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: secure-mcp-keycloak-realm
+  labels:
+    {{- include "secure-mcp.labels" . | nindent 4 }}
+data:
+  realm.json: |
+{{- .Files.Get "files/realm-export.json" | nindent 4 }}
+{{- end }}

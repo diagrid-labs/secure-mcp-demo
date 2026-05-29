@@ -101,10 +101,10 @@ cd /Users/martezkillens/src/secure-mcp-demo
 ./run_demo.sh --no-jwt
 ```
 
-**Expected:** `analyst: ✓✓✗✗`, `ops: ✓✓✓✗`, `admin: ✓✓✓ ddl ✗ (HTTP 401)`
+**Expected:** `analyst: query ✓, write ✗, delete ✗`; `ops: query ✓, write ✓, delete ✗`; `admin: query ✓, write ✓, delete ✗ (HTTP 401 without JWT)`
 
-> *"One command opens the canonical access matrix — schema and query for
-> everyone, write for ops and admin, ddl for admin. But look at admin's ddl
+> *"One command opens the canonical access matrix — query for everyone,
+> write for ops and admin, delete for admin. But look at admin's delete
 > row. Admin is allowed by the Catalyst ACL. The request still failed.*
 >
 > *"That 401 is the bearer middleware. The destructive operation requires
@@ -117,7 +117,7 @@ cd /Users/martezkillens/src/secure-mcp-demo
 ./run_demo.sh
 ```
 
-**Expected:** header now shows `(with Keycloak JWT)`; admin ddl flips to `✓`.
+**Expected:** header now shows `(with Keycloak JWT)`; admin delete flips to `✓`.
 
 > *"Now the agent fetches a token from Keycloak using client_credentials —
 > standard OIDC, same protocol every enterprise app uses for service-to-service.
@@ -164,7 +164,7 @@ cd /Users/martezkillens/src/secure-mcp-demo
 |---|---|---|
 | No token | edge auth | 401 |
 | Forged token | edge auth | 401 |
-| Real analyst token used against mcp-db-ddl | ACL | 403 |
+| Real analyst token used against mcp-db-delete | ACL | 403 |
 
 > *"Three failure modes, three different codes. And look at Terminal 1 —
 > your MCP servers saw none of these requests."*
@@ -187,23 +187,7 @@ cd /Users/martezkillens/src/secure-mcp-demo
 > sidecar, never reaching the MCP server's application code. Defense in
 > depth, cryptographic edition."*
 
-### Beat 8 — Defense-in-depth floor
-
-```bash
-docker exec secure-mcp-postgres psql -U mcp_db_write demo \
-    -c "DELETE FROM employees"
-```
-
-**Expected:** `ERROR: permission denied for table employees`
-
-> *"And if all of that fails — every per-op MCP server connects to the
-> database as its own role-scoped user. The write role we just exercised?
-> It can INSERT, it can UPDATE. It cannot DELETE. Postgres caps it.
-> Catalyst, agent, network — none of them can talk around the database
-> role itself. **Four enforcement layers. Three teams own them. An
-> attacker needs to defeat all four. You need to invent none of them.**"*
-
-### Beat 9 — Closing beat: end-to-end success
+### Beat 8 — Closing beat: end-to-end success
 
 ```bash
 ./oauth2/admin_workflow.sh
@@ -211,16 +195,16 @@ docker exec secure-mcp-postgres psql -U mcp_db_write demo \
 
 **Expected:** three employee tables print (5 rows → 6 rows with "Demo
 Target" visible → 5 rows again). Admin's INSERT goes through `mcp-db-write`,
-Admin's DELETE goes through `mcp-db-ddl` with JWT.
+Admin's DELETE goes through `mcp-db-delete` with JWT.
 
 > *"We've spent the last few minutes watching attackers fail. Here's what
 > legitimate work looks like.*
 >
 > *"Admin authenticates to Catalyst. Admin presents a JWT to the IdP-backed
 > middleware. Real INSERT through mcp-db-write — Demo Target appears on the
-> books. Real DELETE through mcp-db-ddl — Demo Target is gone.*
+> books. Real DELETE through mcp-db-delete — Demo Target is gone.*
 >
-> *"Same architecture that blocked four classes of attacker just enabled
+> *"Same architecture that blocked three classes of attacker just enabled
 > real destructive work in two API calls. That's enterprise-grade
 > governance: hard to break, easy to use."*
 
@@ -246,7 +230,7 @@ Catalyst tunnel state has gone stale. Bounce:
 diagrid dev run --project secure-mcp-demo -f dev.yaml
 ```
 
-### Admin still gets 401 on ddl even with `(with Keycloak JWT)` in the header
+### Admin still gets 401 on delete even with `(with Keycloak JWT)` in the header
 Catalyst's JWKS cache is stale (happens after Keycloak rotates signing keys).
 Force a refresh:
 
@@ -255,7 +239,7 @@ Force a refresh:
 ```
 Wait ~30s for Catalyst to re-poll the JWKS, then retry.
 
-### Admin ddl `✓` even without JWT env vars
+### Admin delete `✓` even without JWT env vars
 The bearer middleware is failing open — Catalyst can't reach the JWKS URL.
 Verify the ngrok tunnel is still alive and `KEYCLOAK_PUBLIC_URL` matches
 the current ngrok URL. Re-run `./oauth2/setup.sh` if you've changed it.
@@ -305,9 +289,6 @@ diagrid dev run --project secure-mcp-demo -f dev.yaml
 ./oauth2/spoof_oauth.sh
 
 # Beat 8
-docker exec secure-mcp-postgres psql -U mcp_db_write demo -c "DELETE FROM employees"
-
-# Beat 9
 ./oauth2/admin_workflow.sh
 
 # Reset
