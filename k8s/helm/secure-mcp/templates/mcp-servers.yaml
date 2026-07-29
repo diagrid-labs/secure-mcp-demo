@@ -1,82 +1,103 @@
 {{- /*
-  Three Deployment+Service pairs for the per-op MCP servers. All three
-  share one image; only `command`, `containerPort`, and DB credentials
-  differ. Driven by values.mcpServer.servers.{query,write,delete}.
+  Single Deployment+Service for the combined MCP server. All tools
+  (query, insert_employee, update_salary, delete_employee, truncate_table)
+  run in one process; per-tool DB users are passed as separate env vars
+  so each tool connects with only its required Postgres privileges.
 */ -}}
-{{- range $key, $srv := .Values.mcpServer.servers }}
 ---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ $srv.appId }}
+  name: {{ .Values.mcpServer.appId }}
   labels:
-    {{- include "secure-mcp.labels" $ | nindent 4 }}
+    {{- include "secure-mcp.labels" . | nindent 4 }}
     app.kubernetes.io/component: mcp-server
-    secure-mcp/op: {{ $key }}
 spec:
   replicas: 1
   selector:
     matchLabels:
-      app.kubernetes.io/name: {{ $.Chart.Name }}
-      app.kubernetes.io/instance: {{ $.Release.Name }}
-      secure-mcp/op: {{ $key }}
+      app.kubernetes.io/name: {{ .Chart.Name }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      app.kubernetes.io/component: mcp-server
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: {{ $.Chart.Name }}
-        app.kubernetes.io/instance: {{ $.Release.Name }}
+        app.kubernetes.io/name: {{ .Chart.Name }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
         app.kubernetes.io/component: mcp-server
-        secure-mcp/op: {{ $key }}
       annotations:
-        {{- include "secure-mcp.catalystAnnotations" (dict "appId" $srv.appId "port" $srv.port "Values" $.Values) | nindent 8 }}
+        {{- include "secure-mcp.catalystAnnotations" (dict "appId" .Values.mcpServer.appId "port" .Values.mcpServer.port "Values" .Values) | nindent 8 }}
     spec:
-      {{- with $.Values.imagePullSecrets }}
+      {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
       {{- end }}
       containers:
         - name: server
-          image: "{{ $.Values.mcpServer.image.repository }}:{{ $.Values.mcpServer.image.tag }}"
-          imagePullPolicy: {{ $.Values.mcpServer.image.pullPolicy }}
-          command: {{ toJson $srv.command }}
+          image: "{{ .Values.mcpServer.image.repository }}:{{ .Values.mcpServer.image.tag }}"
+          imagePullPolicy: {{ .Values.mcpServer.image.pullPolicy }}
+          command: {{ toJson .Values.mcpServer.command }}
           ports:
             - name: http
-              containerPort: {{ $srv.port }}
+              containerPort: {{ .Values.mcpServer.port }}
           env:
             - name: DB_HOST
-              value: {{ include "secure-mcp.pgHost" $ | quote }}
+              value: {{ include "secure-mcp.pgHost" . | quote }}
             - name: DB_PORT
               value: "5432"
             - name: DB_NAME
-              value: {{ $.Values.postgresql.auth.database | default "demo" | quote }}
-            - name: DB_USER
-              value: {{ $srv.dbUser | quote }}
-            - name: DB_PASSWORD
+              value: {{ .Values.postgresql.auth.database | default "demo" | quote }}
+            - name: DB_USER_QUERY
+              value: {{ .Values.mcpServer.dbUsers.query | quote }}
+            - name: DB_PASSWORD_QUERY
               valueFrom:
                 secretKeyRef:
-                  name: {{ $srv.dbPasswordSecret }}
-                  key:  {{ $srv.dbPasswordKey }}
+                  name: {{ .Values.mcpServer.dbPasswordSecret }}
+                  key: query
+            - name: DB_USER_WRITE
+              value: {{ .Values.mcpServer.dbUsers.write | quote }}
+            - name: DB_PASSWORD_WRITE
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.mcpServer.dbPasswordSecret }}
+                  key: write
+            - name: DB_USER_DELETE
+              value: {{ .Values.mcpServer.dbUsers.delete | quote }}
+            - name: DB_PASSWORD_DELETE
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.mcpServer.dbPasswordSecret }}
+                  key: delete
             - name: UI_BACKEND_URL
-              value: "http://{{ $.Release.Name }}-ui:80"
+              value: "http://{{ .Release.Name }}-ui:80"
+            # mcp-server verifies the bearer JWT on every call itself (see
+            # servers/mcp_server.py) — there's no Dapr sidecar to do it for
+            # an MCPServer-resource-routed app. Needs Keycloak's JWKS,
+            # reachable at the public ingress FQDN (Catalyst attaches the
+            # token via oauth2/setup.sh; the audience must match).
+            - name: KEYCLOAK_PUBLIC_URL
+              value: "http://{{ .Values.ingress.host }}/keycloak"
+            - name: KEYCLOAK_REALM
+              value: {{ .Values.catalystProxyClient.realm | quote }}
+            - name: KEYCLOAK_AUDIENCE
+              value: {{ .Values.catalystProxyClient.audience | quote }}
           resources:
-            {{- toYaml $.Values.mcpServer.resources | nindent 12 }}
+            {{- toYaml .Values.mcpServer.resources | nindent 12 }}
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ $srv.appId }}
+  name: {{ .Values.mcpServer.appId }}
   labels:
-    {{- include "secure-mcp.labels" $ | nindent 4 }}
+    {{- include "secure-mcp.labels" . | nindent 4 }}
     app.kubernetes.io/component: mcp-server
-    secure-mcp/op: {{ $key }}
 spec:
-  type: {{ $.Values.mcpServer.service.type }}
+  type: {{ .Values.mcpServer.service.type }}
   selector:
-    app.kubernetes.io/name: {{ $.Chart.Name }}
-    app.kubernetes.io/instance: {{ $.Release.Name }}
-    secure-mcp/op: {{ $key }}
+    app.kubernetes.io/name: {{ .Chart.Name }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/component: mcp-server
   ports:
     - name: http
-      port: {{ $srv.port }}
+      port: {{ .Values.mcpServer.port }}
       targetPort: http
-{{- end }}

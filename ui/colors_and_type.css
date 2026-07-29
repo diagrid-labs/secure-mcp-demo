@@ -4,7 +4,8 @@
    ========================================================= */
 
 /* ---------- Webfonts ---------- */
-@import url('https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Outfit:wght@300;400;500;600;700;900&family=Geist+Mono:wght@400;500&display=swap');
+/* Standardized on two typefaces: Geist for text, Geist Mono for code. */
+@import url('https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500;600&display=swap');
 
 :root {
   /* ===================== CORE BRAND COLORS ===================== */
@@ -114,14 +115,12 @@
   --eyebrow-on-dark: #7BD0B8;
 
   /* ===================== TYPE SYSTEM =====================
-     Geist — Diagrid's primary typeface. Headings, hero titles, body.
-     Outfit — Secondary typeface; used for eyebrows, marketing display
-              and select callouts (note: V4 retires Outfit-as-primary).
-     Geist Mono — code, data, technical labels.
+     Standardized on exactly two typefaces:
+       Geist      — all text (headings, body, labels, eyebrows).
+       Geist Mono — all code, data, technical labels.
   */
   --font-display: 'Geist', 'Inter', system-ui, -apple-system, sans-serif;
   --font-body:    'Geist', 'Inter', system-ui, -apple-system, sans-serif;
-  --font-marketing: 'Outfit', 'Geist', system-ui, sans-serif;
   --font-mono:    'Geist Mono', 'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
 
   /* Heading scale (deck-scale; 1920×1080 reference) */

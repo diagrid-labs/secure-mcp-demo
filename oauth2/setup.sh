@@ -1,21 +1,34 @@
 #!/usr/bin/env bash
-# Layer Keycloak/OIDC bearer enforcement on top of mcp-db-delete. After this
-# runs, every call to mcp-db-delete must present a valid JWT issued by the
-# Keycloak realm.
+# Enables Catalyst-NATIVE OAuth 2.0 client-credentials auth on the MCPServer
+# resource itself, per:
+#   https://docs.diagrid.io/develop/mcp/mcp-authentication#oauth-20-client-credentials
+#
+# This is THE demo's step-up mechanic. `./setup.sh` (repo root) already made
+# every call to mcp-server require a valid Keycloak-issued JWT — see the
+# bearer middleware it applies. Before this script runs, nothing can attach
+# that JWT, so every call fails (401), regardless of the MCPServer access
+# policy. Running this script configures Catalyst itself to fetch and
+# attach its own JWT (via client_credentials, using its own dedicated
+# Keycloak client "catalyst-proxy" — distinct from any agent identity) on
+# every call it forwards. Only after this runs do calls succeed (still
+# gated by the per-tool MCPServer access policy on top).
 #
 # Prereqs:
-#   - Catalyst project + app-ids exist (from running ./setup.sh)
-#   - Keycloak running locally (docker-compose up -d)
-#   - admin-agent already granted on mcp-db-delete (e.g. ./scripts/up.sh)
+#   - Catalyst project + MCPServer resource + bearer middleware exist (./setup.sh)
+#   - Keycloak running and reachable at KEYCLOAK_PUBLIC_URL, with the
+#     "catalyst-proxy" client imported (see keycloak/realm-export.json)
 #
 # Environment:
-#   KEYCLOAK_PUBLIC_URL  — URL Catalyst's cloud-side middleware can reach
-#                          Keycloak at (e.g. https://abc-123.ngrok-free.app).
-#                          Defaults to http://localhost:8080, which only
-#                          works if the middleware executes locally — most
-#                          Catalyst dev-tunnel setups need a public URL.
-#   KEYCLOAK_REALM       — defaults to "secure-mcp"
-#   KEYCLOAK_AUDIENCE    — defaults to "https://secure-mcp-demo/"
+#   KEYCLOAK_PUBLIC_URL          — URL Catalyst's control plane can reach
+#                                  Keycloak at. Defaults to http://localhost:8080
+#                                  (only works if Catalyst runs locally; most
+#                                  setups need a public URL, e.g. an ngrok
+#                                  tunnel for local dev, or the ingress FQDN
+#                                  + /keycloak for the k8s deployment).
+#   KEYCLOAK_REALM                — defaults to "secure-mcp"
+#   KEYCLOAK_AUDIENCE             — defaults to "https://secure-mcp-demo/"
+#   CATALYST_PROXY_CLIENT_SECRET  — defaults to "catalyst-proxy-secret"
+#                                   (matches keycloak/realm-export.json)
 
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -26,58 +39,64 @@ PROJECT="${DIAGRID_PROJECT:-secure-mcp-demo}"
 export KEYCLOAK_PUBLIC_URL="${KEYCLOAK_PUBLIC_URL:-http://localhost:8080}"
 export KEYCLOAK_REALM="${KEYCLOAK_REALM:-secure-mcp}"
 export KEYCLOAK_AUDIENCE="${KEYCLOAK_AUDIENCE:-https://secure-mcp-demo/}"
+export CATALYST_PROXY_CLIENT_SECRET="${CATALYST_PROXY_CLIENT_SECRET:-catalyst-proxy-secret}"
 
 echo "============================================"
-echo " oauth2 setup — adding bearer middleware to mcp-db-delete"
+echo " Catalyst-native OAuth2 client-credentials auth"
+echo " (Catalyst -> mcp-server)"
 echo "============================================"
 echo " KEYCLOAK_PUBLIC_URL : $KEYCLOAK_PUBLIC_URL"
 echo " KEYCLOAK_REALM      : $KEYCLOAK_REALM"
 echo " KEYCLOAK_AUDIENCE   : $KEYCLOAK_AUDIENCE"
+echo " clientID            : catalyst-proxy"
 echo "============================================"
 
 if [[ "$KEYCLOAK_PUBLIC_URL" == *"localhost"* ]]; then
     echo ""
-    echo " ⚠️  KEYCLOAK_PUBLIC_URL is localhost. If Catalyst's middleware"
-    echo "     runs at the cloud edge it won't be able to reach Keycloak"
-    echo "     here and JWT validation will silently fail open."
-    echo "     If you see admin still able to delete without a JWT, run:"
-    echo "         ngrok http 8080"
-    echo "     and re-run this script with KEYCLOAK_PUBLIC_URL=<ngrok https URL>"
+    echo " ⚠️  KEYCLOAK_PUBLIC_URL is localhost. Catalyst's control plane runs"
+    echo "     in the cloud and can't reach a bare localhost URL — token"
+    echo "     fetches will fail unless Keycloak is genuinely reachable there"
+    echo "     (e.g. an ngrok tunnel, or the k8s deployment's public ingress"
+    echo "     FQDN + /keycloak)."
 fi
 
+CURRENT_URL=$(diagrid mcpserver get mcp-server --project "$PROJECT" -o json | \
+    uv run python -c "import json,sys; print(json.load(sys.stdin)['spec']['endpoint']['streamableHTTP']['url'])")
 echo ""
-echo ">>> Applying bearer Component (scoped to mcp-db-delete)"
-TMP_COMPONENT=$(mktemp /tmp/secure-mcp-bearer-XXXXXX.yaml)
-trap 'rm -f "$TMP_COMPONENT"' EXIT
-envsubst < oauth2/bearer-component.yaml > "$TMP_COMPONENT"
-diagrid apply --project "$PROJECT" -f "$TMP_COMPONENT"
+echo ">>> Current endpoint URL (preserved): $CURRENT_URL"
+
+TMP=$(mktemp /tmp/secure-mcp-catalyst-oauth-XXXXXX.yaml)
+trap 'rm -f "$TMP"' EXIT
+cat > "$TMP" <<EOF
+apiVersion: dapr.io/v1alpha1
+kind: MCPServer
+metadata:
+  name: mcp-server
+spec:
+  endpoint:
+    streamableHTTP:
+      url: ${CURRENT_URL}
+      auth:
+        oauth2:
+          issuer: ${KEYCLOAK_PUBLIC_URL}/realms/${KEYCLOAK_REALM}/protocol/openid-connect/token
+          audience: ${KEYCLOAK_AUDIENCE}
+          clientID: catalyst-proxy
+          scopes: []
+          clientSecret: ${CATALYST_PROXY_CLIENT_SECRET}
+EOF
 
 echo ""
-echo ">>> Updating db-delete Configuration to include the bearer middleware"
-echo "    (this preserves the existing ACL — admin-agent stays allowed)"
-diagrid apply --project "$PROJECT" -f oauth2/config-delete-oauth.yaml
-
-echo ""
-echo ">>> Waiting 5s for propagation..."
-sleep 5
+echo ">>> Applying MCPServer resource with Catalyst-native OAuth2 auth"
+diagrid apply --project "$PROJECT" -f "$TMP"
 
 echo ""
 echo "============================================"
-echo " OAuth2 enforcement is now active on mcp-db-delete"
-echo "============================================"
+echo " Catalyst will now fetch + attach its own OAuth2 token on every"
+echo " call it forwards to mcp-server. Calls now succeed, gated only by"
+echo " the MCPServer access policy (./scripts/up.sh / grant.sh)."
 echo ""
-echo " Calls to mcp-db-delete now require BOTH:"
-echo "   - a valid Catalyst dapr-api-token (existing)"
-echo "   - a valid Bearer JWT from Keycloak (new)"
-echo ""
-echo " To make the agent fetch and present a JWT:"
-echo "   export KEYCLOAK_URL=http://localhost:8080"
-echo "   export KEYCLOAK_REALM=$KEYCLOAK_REALM"
-echo "   export KEYCLOAK_CLIENT_ID=mcp-agent"
-echo "   export KEYCLOAK_CLIENT_SECRET=mcp-agent-secret"
-echo "   export KEYCLOAK_AUDIENCE=$KEYCLOAK_AUDIENCE"
-echo ""
-echo " (KEYCLOAK_URL for the agent is always localhost — the agent runs"
-echo "  on your machine. KEYCLOAK_PUBLIC_URL is for Catalyst to reach in)"
+echo " Verify:"
+echo "   diagrid mcpserver get mcp-server --project $PROJECT -o json | jq '.spec.endpoint.streamableHTTP.auth'"
 echo ""
 echo " To revert: ./oauth2/teardown.sh"
+echo "============================================"

@@ -10,10 +10,23 @@ FROM python:3.12-slim
 # --- diagrid CLI -----------------------------------------------------------
 # The UI backend shells out to `diagrid` for policy reads/writes and
 # app-id token lookups. Pin a version to keep deploys reproducible.
-ARG DIAGRID_VERSION=1.4.0
+#
+# install.sh only reads a $RELEASE_VERSION env var, not a positional arg —
+# `bash -s -- v1.4.0` silently ignores that "v1.4.0" and falls back to
+# whatever default is baked into the script. It also never installs the
+# binary anywhere; it just extracts `diagrid` into the current directory
+# and tells you to move it into $PATH yourself. Do both explicitly, or the
+# binary silently doesn't exist at runtime (confirmed: every diagrid-CLI
+# code path in ui_backend failed with "not found in $PATH", including the
+# ACL matrix read and the JWT step-up toggle).
+ARG DIAGRID_VERSION=v1.54.0
 RUN apt-get update \
  && apt-get install -y --no-install-recommends curl ca-certificates \
- && curl -fsSL "https://downloads.diagrid.io/cli/install.sh" | bash -s -- v${DIAGRID_VERSION} \
+ && cd /tmp \
+ && RELEASE_VERSION=${DIAGRID_VERSION} bash -c "$(curl -fsSL https://downloads.diagrid.io/cli/install.sh)" \
+ && mv /tmp/diagrid /usr/local/bin/diagrid \
+ && chmod +x /usr/local/bin/diagrid \
+ && cd / \
  && apt-get purge -y curl && apt-get autoremove -y \
  && rm -rf /var/lib/apt/lists/*
 

@@ -6,26 +6,19 @@
 
 function AgentConsole() {
   const [s, a] = window.__demo.useDemo();
-  const { ROLES, OPS, SERVER_OF } = window.__demo;
+  const { ROLES, OPS, MCP_PATH } = window.__demo;
   const lastResult = s.lastResult;
-  const jwtRequired = s.jwtMiddlewareCfg;   // policy state from backend bootstrap
+  // Whether Catalyst's own OAuth2 auth is configured on the MCPServer
+  // resource — a global setting (see oauth2/setup.sh), not per-call. JWT
+  // verification itself is always required, on every op; this reflects
+  // whether anything currently satisfies it.
+  const jwtConfigured = s.jwtMiddlewareCfg;
 
   return (
     <section className="card" data-screen-label="Agent Console">
       <div className="card-h">
         <div>
-          <div className="eyebrow">01 · Agent</div>
-          <h2>Console</h2>
-        </div>
-        <div className="sub">
-          {lastResult ? (
-            <span>
-              last · <b style={{ color: "var(--fg)" }}>{lastResult.role}</b> · {lastResult.op}{" "}
-              <span style={{ opacity: 0.6 }}>· {lastResult.t}</span>
-            </span>
-          ) : (
-            "no calls yet"
-          )}
+          <h2>MCP Client</h2>
         </div>
       </div>
 
@@ -41,7 +34,7 @@ function AgentConsole() {
           }}
         >
           <div>
-            <div className="field-h">Acting as</div>
+            <div className="field-h">Agent role:</div>
             <div className="segmented" role="tablist" aria-label="Agent role">
               {ROLES.map((r) => (
                 <button
@@ -58,26 +51,32 @@ function AgentConsole() {
           </div>
 
           <div>
-            <div className="field-h">Step-up auth</div>
-            <div
-              className={`jwt-switch ${s.jwtPresented ? "on" : ""}`}
-              role="switch"
-              aria-checked={s.jwtPresented}
-              tabIndex={0}
-              onClick={a.toggleJwtPresented}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" || e.key === " ") { e.preventDefault(); a.toggleJwtPresented(); }
-              }}
-              style={{ cursor: "pointer", width: "100%", justifyContent: "space-between" }}
-            >
+            <div className="field-h">Catalyst OAuth2 auth (Keycloak)</div>
+            <div className={`jwt-status-panel ${jwtConfigured ? "on" : "off"} ${s.busyPolicy ? "busy" : ""}`}>
               <div className="lbl">
                 <span className="top">Keycloak JWT</span>
-                <span className="bot">{s.jwtPresented ? "presented alongside Catalyst token" : "not presented"}</span>
+                <span className="bot">
+                  {s.busyPolicy
+                    ? "updating…"
+                    : jwtConfigured
+                      ? "Catalyst attaches its own token to every call"
+                      : "not configured — every call fails, on every op"}
+                </span>
               </div>
-              <button className="switch" aria-hidden="true" tabIndex={-1} />
+              <button
+                type="button"
+                className={`btn ${jwtConfigured ? "btn-outline" : "btn-primary"}`}
+                onClick={a.openJwtConfirm}
+                disabled={s.busyPolicy}
+                aria-haspopup="dialog"
+              >
+                {s.busyPolicy ? "Updating…" : jwtConfigured ? "Turn off…" : "Turn on…"}
+              </button>
             </div>
           </div>
         </div>
+
+        {s.jwtConfirmOpen && <JwtConfirmModal s={s} a={a} />}
 
         {/* Row 2 — fire a call + result side by side */}
         <div
@@ -90,7 +89,7 @@ function AgentConsole() {
           }}
         >
           <div>
-            <div className="field-h">Fire a call</div>
+            <div className="field-h">MCP tool call:</div>
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
               {OPS.map((op) => (
                 <button
@@ -107,8 +106,7 @@ function AgentConsole() {
                     className="target"
                     style={{ font: "500 11px var(--font-mono)", letterSpacing: "0.02em" }}
                   >
-                    POST /v1.0/invoke/{SERVER_OF[op]}/method/mcp
-                    {op === "delete" && jwtRequired ? " · requires JWT" : ""}
+                    POST {MCP_PATH} · requires JWT
                   </span>
                 </button>
               ))}
@@ -116,8 +114,8 @@ function AgentConsole() {
           </div>
 
           <div>
-            <div className="field-h">Result</div>
-            <HttpResponse lastResult={lastResult} />
+            <div className="field-h">Result:</div>
+            <HttpResponse lastResult={lastResult} jwtToken={s.jwtPreview ? s.jwtPreview.token : null} />
           </div>
         </div>
       </div>
@@ -125,7 +123,7 @@ function AgentConsole() {
   );
 }
 
-function HttpResponse({ lastResult }) {
+function HttpResponse({ lastResult, jwtToken }) {
   if (!lastResult) {
     return (
       <div className="http-inline idle">
@@ -149,7 +147,7 @@ function HttpResponse({ lastResult }) {
   const r = lastResult;
   const isOk = r.status === 200;
   const klass = isOk ? "ok" : "fail";
-  const path = r.path || `/v1.0/invoke/${r.server}/method/mcp`;
+  const path = r.path || window.__demo.MCP_PATH;
 
   return (
     <div className={`http-inline ${klass}`}>
@@ -168,7 +166,7 @@ function HttpResponse({ lastResult }) {
       </div>
 
       <div className="gate-trace">
-        <GateTrace result={r} />
+        <GateTrace result={r} jwtToken={jwtToken} />
         <SawTraffic result={r} />
       </div>
     </div>
@@ -179,7 +177,16 @@ function statusText(s) {
   return s === 200 ? "OK" : s === 401 ? "Unauthorized" : s === 403 ? "Forbidden" : "";
 }
 
-function GateTrace({ result }) {
+// Shows only a prefix of the illustrative JWT — this is Catalyst's own
+// token (see README.md's "OIDC / bearer middleware"), not something that
+// needs to stay secret from this UI's own audience, but the full token is
+// long and not the point; a recognizable subset is enough to show it's real.
+function truncateJwt(token, prefixLen = 40) {
+  if (!token) return "";
+  return token.slice(0, prefixLen) + "...";
+}
+
+function GateTrace({ result, jwtToken }) {
   const r = result;
   const headers = r.headersSent || {};
   const daprToken = headers["dapr-api-token"];
@@ -189,13 +196,10 @@ function GateTrace({ result }) {
   if (r.kind === "ok") {
     edge = { state: "passed", detail: "bearer token resolved to app-id" };
     acl  = { state: "passed", detail: `'${r.role}' allowed on ${r.server}` };
-    if (r.op === "delete") {
-      jwt = r.jwt
-        ? { state: "passed", detail: "JWT verified (iss, aud, sig)" }
-        : { state: "skipped", detail: "not required for this op" };
-    } else {
-      jwt = { state: "skipped", detail: "not required for this op" };
-    }
+    // Required on every op, always — mcp-server verifies a JWT on every
+    // call, no exceptions for query/write. A successful call only ever
+    // happens because Catalyst's own token satisfied it.
+    jwt = { state: "passed", detail: "JWT verified — Catalyst's own token (iss, aud, sig)" };
   } else if (r.kind === "edge-fail") {
     edge = { state: "failed", detail: r.reason };
     acl  = { state: "skipped", detail: "not reached" };
@@ -230,8 +234,11 @@ function GateTrace({ result }) {
         name="JWT middleware"
         detail={jwt.detail}
         state={jwt.state}
-        sub={jwt.state === "skipped" && r.op !== "delete" ? "only enforced on mcp-db-delete" : null}
-        header={authHdr ? { k: "Authorization", v: authHdr } : null}
+        header={
+          r.kind === "ok" && jwtToken
+            ? { k: "Authorization", v: `Bearer ${truncateJwt(jwtToken)}` }
+            : (authHdr ? { k: "Authorization", v: authHdr } : null)
+        }
       />
     </>
   );
@@ -289,6 +296,77 @@ function sqlFor(op) {
   if (op === "write")  return "INSERT … 'Demo Target'";
   if (op === "delete") return "DELETE … name='Demo Target'";
   return "";
+}
+
+/* Confirmation modal for the JWT step-up toggle. A click on the button in
+   AgentConsole only opens this — nothing is applied until Confirm. */
+function JwtConfirmModal({ s, a }) {
+  const enabling = s.jwtConfirmTarget === true;
+  const dialogRef = React.useRef(null);
+
+  React.useEffect(() => {
+    const onKey = (e) => { if (e.key === "Escape") a.closeJwtConfirm(); };
+    window.addEventListener("keydown", onKey);
+    dialogRef.current?.focus();
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  return (
+    <>
+      <div className="scrim open" onClick={a.closeJwtConfirm} />
+      <div
+        className="confirm-modal"
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="jwt-confirm-title"
+        aria-describedby="jwt-confirm-body"
+        tabIndex={-1}
+        ref={dialogRef}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <h2 id="jwt-confirm-title">
+          {enabling ? "Turn on Keycloak JWT enforcement?" : "Turn off Keycloak JWT enforcement?"}
+        </h2>
+        <div id="jwt-confirm-body" className="confirm-modal-body">
+          {enabling ? (
+            <>
+              <p>
+                This configures Catalyst's own OAuth2 client-credentials on the{" "}
+                <code>mcp-server</code> MCPServer resource. From then on,{" "}
+                <b>every mcp-server call will require a valid Keycloak JWT</b> —
+                Catalyst fetches and attaches its own token automatically, on
+                every call, for every role.
+              </p>
+              <p className="fine">
+                This will also fetch a real, illustrative JWT from Keycloak using
+                the same <code>catalyst-proxy</code> client identity Catalyst
+                itself uses, purely to show you what that token looks like —
+                it is <b>not</b> the literal token Catalyst attaches to any
+                specific call.
+              </p>
+            </>
+          ) : (
+            <p>
+              This removes Catalyst's OAuth2 auth from the <code>mcp-server</code>{" "}
+              MCPServer resource. From then on, <b>every call will start failing
+              with 401</b>, regardless of what the ACL matrix allows — nothing
+              will be supplying a JWT anymore.
+            </p>
+          )}
+        </div>
+        <div className="confirm-modal-actions">
+          <button className="btn btn-ghost" onClick={a.closeJwtConfirm}>Cancel</button>
+          <button
+            className={`btn ${enabling ? "btn-primary" : "btn-outline"}`}
+            onClick={a.confirmJwtToggle}
+            autoFocus
+          >
+            {enabling ? "Confirm — enable" : "Confirm — disable"}
+          </button>
+        </div>
+      </div>
+    </>
+  );
 }
 
 window.AgentConsole = AgentConsole;

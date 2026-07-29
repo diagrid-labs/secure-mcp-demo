@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Force-stop all dev sessions for this project's app-ids AND kill any
-# orphaned local server processes still bound to the MCP server ports.
+# orphaned local server processes still bound to the MCP server port.
 #
 # Run before `diagrid dev run -f dev.yaml` if you're seeing:
 #   - HTTP 502s on calls that should pass (stale Catalyst tunnels)
@@ -8,7 +8,7 @@
 #     processes from prior diagrid dev run cycles)
 #
 # Idempotent and safe to run anytime. Doesn't touch app-ids,
-# configurations, or Postgres state.
+# MCPServer resource, or Postgres state.
 
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -17,16 +17,14 @@ cd "$SCRIPT_DIR"
 PROJECT="${DIAGRID_PROJECT:-secure-mcp-demo}"
 
 APP_IDS=(
-    mcp-db-query
-    mcp-db-write
-    mcp-db-delete
+    mcp-server
     analyst-agent
     ops-agent
     admin-agent
 )
 
-# Server ports — must match dev.yaml / servers/db_*.py
-SERVER_PORTS=(8001 8003 8004)
+# Single combined server port — must match dev.yaml / servers/mcp_server.py
+SERVER_PORTS=(8001)
 
 echo ">>> Stopping any active dev sessions for project: $PROJECT"
 for appid in "${APP_IDS[@]}"; do
@@ -34,7 +32,7 @@ for appid in "${APP_IDS[@]}"; do
 done
 
 echo ""
-echo ">>> Killing any orphaned processes on MCP server ports (${SERVER_PORTS[*]})"
+echo ">>> Killing any orphaned processes on MCP server port (${SERVER_PORTS[*]})"
 for port in "${SERVER_PORTS[@]}"; do
     pids=$(lsof -ti ":$port" 2>/dev/null || true)
     if [ -n "$pids" ]; then

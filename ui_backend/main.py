@@ -15,9 +15,11 @@ Then open http://localhost:5050/
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import json
 import os
+import re
 import subprocess
 import tempfile
 import time
@@ -37,17 +39,20 @@ STATIC_DIR = REPO_ROOT / "ui"
 PROJECT = os.environ.get("DIAGRID_PROJECT", "secure-mcp-demo")
 
 AGENTS = ["analyst-agent", "ops-agent", "admin-agent"]
-SERVERS = ["mcp-db-query", "mcp-db-write", "mcp-db-delete"]
+SERVERS = ["mcp-server"]
 
+# All operations are served by the single combined MCP server.
 OP_TO_SERVER = {
-    "query":  "mcp-db-query",
-    "write":  "mcp-db-write",
-    "delete": "mcp-db-delete",
+    "query":  "mcp-server",
+    "write":  "mcp-server",
+    "delete": "mcp-server",
 }
-OP_TO_CONFIG = {
-    "query":  "db-query",
-    "write":  "db-write",
-    "delete": "db-delete",
+
+# Tools that belong to each logical operation — used for grant/revoke.
+OP_TO_TOOLS = {
+    "query":  ["query"],
+    "write":  ["insert_employee", "update_salary"],
+    "delete": ["delete_employee", "truncate_table"],
 }
 
 app = FastAPI(title="secure-mcp demo UI backend")
@@ -78,8 +83,7 @@ def _publish_event(evt: dict) -> None:
 
 
 def _recent_heartbeat(server: str, tool: str, within_seconds: float = 2.5) -> dict | None:
-    """Find the most recent heartbeat for (server, tool) within a window.
-    Used by /api/invoke to enrich its response with what the server saw."""
+    """Find the most recent heartbeat for (server, tool) within a window."""
     cutoff = time.time() - within_seconds
     for evt in reversed(_event_log):
         if evt.get("ts", 0) < cutoff:
@@ -91,9 +95,13 @@ def _recent_heartbeat(server: str, tool: str, within_seconds: float = 2.5) -> di
 
 # ─── helpers ──────────────────────────────────────────────────────────────
 
-def _diagrid_json(*args: str) -> dict:
-    """Run a diagrid CLI command and parse its JSON output."""
-    cmd = ["diagrid", *args, "--project", PROJECT, "--output", "json"]
+def _run_diagrid_capture(cmd: list[str]) -> subprocess.CompletedProcess:
+    """Run a diagrid CLI command, retrying once on a transient empty-stdout
+    result (observed intermittently under this pod's concurrent request
+    load — exit 0 but no output, not reproducible as a simple rate limit or
+    concurrency race; a single immediate retry has reliably recovered it in
+    testing). Raises HTTPException for anything that isn't a transient blip.
+    """
     try:
         out = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=15)
     except FileNotFoundError:
@@ -102,21 +110,40 @@ def _diagrid_json(*args: str) -> dict:
         raise HTTPException(status_code=502, detail=f"diagrid command failed: {e.stderr.strip()}")
     except subprocess.TimeoutExpired:
         raise HTTPException(status_code=504, detail="diagrid command timed out")
-    return json.loads(out.stdout)
+
+    if not out.stdout.strip():
+        try:
+            out = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=15)
+        except FileNotFoundError:
+            raise HTTPException(status_code=502, detail="diagrid CLI not found in UI backend image")
+        except subprocess.CalledProcessError as e:
+            raise HTTPException(status_code=502, detail=f"diagrid command failed: {e.stderr.strip()}")
+        except subprocess.TimeoutExpired:
+            raise HTTPException(status_code=504, detail="diagrid command timed out")
+        if not out.stdout.strip():
+            raise HTTPException(status_code=502, detail=f"diagrid returned no output for: {' '.join(cmd)}")
+
+    return out
+
+
+def _diagrid_json(*args: str) -> dict:
+    """Run a diagrid CLI command and parse its JSON output."""
+    cmd = ["diagrid", *args, "--project", PROJECT, "--output", "json"]
+    out = _run_diagrid_capture(cmd)
+    try:
+        return json.loads(out.stdout)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=502, detail=f"diagrid returned invalid JSON for: {' '.join(cmd)}")
 
 
 def _diagrid_project_get() -> dict:
     """`diagrid project get` takes project as positional, not a flag."""
     cmd = ["diagrid", "project", "get", PROJECT, "--output", "json"]
+    out = _run_diagrid_capture(cmd)
     try:
-        out = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=15)
-    except FileNotFoundError:
-        raise HTTPException(status_code=502, detail="diagrid CLI not found in UI backend image")
-    except subprocess.CalledProcessError as e:
-        raise HTTPException(status_code=502, detail=f"diagrid project get failed: {e.stderr.strip()}")
-    except subprocess.TimeoutExpired:
-        raise HTTPException(status_code=504, detail="diagrid project get timed out")
-    return json.loads(out.stdout)
+        return json.loads(out.stdout)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=502, detail=f"diagrid returned invalid JSON for: {' '.join(cmd)}")
 
 
 def _fingerprint(token: str) -> str:
@@ -124,10 +151,6 @@ def _fingerprint(token: str) -> str:
 
 
 def _mask_dapr_token(t: str, prefix: int = 16, suffix: int = 8) -> str:
-    """Mask a Catalyst dapr-api-token for UI display: keep prefix + suffix,
-    ellipsis the middle. Tokens look like
-    `diagrid://v1/<org>/<proj>/<appid>/<uuid>` so the prefix tells you it's
-    a real Catalyst token and the suffix is enough to disambiguate roles."""
     if not t:
         return ""
     if len(t) <= prefix + suffix + 1:
@@ -136,9 +159,6 @@ def _mask_dapr_token(t: str, prefix: int = 16, suffix: int = 8) -> str:
 
 
 def _mask_jwt(t: str, prefix: int = 24) -> str:
-    """JWTs are header.payload.signature, base64url. The header start is
-    recognizable (eyJhbGc...) and signals 'this is a JWT'; we don't want
-    to leak the payload claims so we cut after the header."""
     if not t:
         return ""
     return f"{t[:prefix]}…"
@@ -153,6 +173,24 @@ def _headers_sent(catalyst_token: str | None, jwt_token: str | None) -> dict:
     return out
 
 
+def _b64url_decode(segment: str) -> bytes:
+    padding = "=" * (-len(segment) % 4)
+    return base64.urlsafe_b64decode(segment + padding)
+
+
+def _decode_jwt_for_display(token: str) -> tuple[dict, dict]:
+    """Split a compact JWT into (header, claims) dicts for display only —
+    no signature verification. Real verification happens server-side in
+    servers/mcp_server.py's KeycloakTokenVerifier against Keycloak's JWKS.
+    """
+    parts = token.split(".")
+    if len(parts) != 3:
+        raise ValueError(f"expected 3 dot-separated segments, got {len(parts)}")
+    header = json.loads(_b64url_decode(parts[0]))
+    claims = json.loads(_b64url_decode(parts[1]))
+    return header, claims
+
+
 def _agent_token(role: str) -> str:
     env_name = f"{role.upper()}_AGENT_TOKEN"
     token = os.environ.get(env_name, "")
@@ -164,9 +202,6 @@ def _agent_token(role: str) -> str:
 
 
 def _pg_select_employees() -> list[dict]:
-    """Read the employees table directly, joined with departments so the
-    UI can render the readable department name. Uses postgres superuser
-    so the UI can read regardless of which per-op DB role is exercised."""
     conn = psycopg2.connect(
         host=os.environ.get("DB_HOST", "localhost"),
         port=os.environ.get("DB_PORT", "5432"),
@@ -188,7 +223,6 @@ def _pg_select_employees() -> list[dict]:
             rows = []
             for r in cur.fetchall():
                 row = dict(r)
-                # Decimal + date aren't JSON-native — coerce for the wire.
                 if row.get("salary") is not None:
                     row["salary"] = float(row["salary"])
                 if row.get("hired_on") is not None:
@@ -223,10 +257,7 @@ def employees() -> dict:
 
 @app.get("/api/identity")
 def identity() -> dict:
-    """Token prefixes + SHA-256 fingerprints for 3 agents + 4 per-op servers.
-
-    Matches the shape state.jsx expects in its IDENTITY constant.
-    """
+    """Token prefixes + SHA-256 fingerprints for 3 agents + 1 MCP server."""
     out: dict[str, list[dict]] = {"agents": [], "servers": []}
 
     def _entry(appid: str, kind: str) -> dict:
@@ -259,73 +290,81 @@ def identity() -> dict:
 
 @app.get("/api/policy/configured")
 def policy_configured() -> dict:
-    """Read current ACL matrix from Catalyst.
+    """Read current ACL matrix from the MCPServer access policy.
 
-    Returns the 3x3 matrix shape state.jsx uses + JWT middleware on/off.
+    Returns the 3×3 matrix shape state.jsx uses + JWT middleware on/off.
     """
     matrix: dict[str, dict[str, bool]] = {
-        role: {op: False for op in OP_TO_CONFIG} for role in ("analyst", "ops", "admin")
+        role: {op: False for op in OP_TO_TOOLS} for role in ("analyst", "ops", "admin")
     }
 
-    for op, cfg_name in OP_TO_CONFIG.items():
-        try:
-            data = _diagrid_json("configuration", "get", cfg_name)
-        except HTTPException:
-            # Configuration might not exist yet (pre-setup). Treat as all-deny.
-            continue
-        ac = (data.get("spec", {}) or {}).get("accessControl", {}) or {}
-        policies = ac.get("policies", []) or []
-        for entry in policies:
-            who = entry.get("appId", "")
-            # appId comes as "analyst-agent"; matrix keys are "analyst"
-            for role in matrix:
-                if who == f"{role}-agent":
-                    matrix[role][op] = (entry.get("defaultAction") == "allow")
-
-    # JWT middleware on mcp-db-delete: the bearer middleware is wired into the
-    # db-delete Configuration under spec.appHttpPipeline.handlers as a
-    # middleware.http.bearer handler.
-    jwt_on = False
+    # Read the MCPServer access policy.
+    # spec.rules[].callers[].appID and spec.rules[].grants[].names (capability=tools)
     try:
-        data = _diagrid_json("configuration", "get", "db-delete")
-        pipeline = (data.get("spec", {}) or {}).get("appHttpPipeline", {}) or {}
-        handlers = pipeline.get("handlers", []) or []
-        jwt_on = any(
-            (h.get("type", "") or "").endswith(".bearer")
-            or "bearer" in (h.get("name", "") or "").lower()
-            for h in handlers
-        )
+        data = _diagrid_json("mcpserver", "access", "get", "mcp-server")
+        rules = (data.get("spec", {}) or {}).get("rules", []) or []
+        for rule in rules:
+            callers = [c.get("appID") for c in (rule.get("callers") or [])]
+            grants = rule.get("grants") or []
+            allowed_tools: set[str] = set()
+            for grant in grants:
+                if grant.get("capability") == "tools":
+                    names = grant.get("names") or []
+                    allowed_tools.update(names)
+            for caller in callers:
+                for role in ("analyst", "ops", "admin"):
+                    if caller in (f"{role}-agent", "*"):
+                        for op, tools in OP_TO_TOOLS.items():
+                            if "*" in allowed_tools or allowed_tools & set(tools):
+                                matrix[role][op] = True
     except HTTPException:
-        jwt_on = False
+        pass  # Policy not yet set up — all-deny is correct default.
 
-    # Even when the pipeline is wired, the bearer Component itself can
-    # silently fail-open if it can't fetch JWKS (ngrok down, Keycloak
-    # unreachable, etc.). Surface that state so the UI can warn.
+    # JWT middleware: mcp-server always requires a bearer JWT (Dapr bearer
+    # middleware applied once by ../setup.sh — not toggled). What's actually
+    # toggled here is whether Catalyst itself is configured to fetch and
+    # attach its own JWT: spec.endpoint.streamableHTTP.auth.oauth2 on the
+    # MCPServer resource (see ../oauth2/setup.sh). Without it, nothing
+    # attaches a JWT and every call 401s regardless of the ACL matrix above.
+    jwt_on = False
     jwt_status = "absent"
     jwt_error = None
-    if jwt_on:
-        try:
-            comp = _diagrid_json("component", "get", "bearer")
-            appid_statuses = ((comp.get("status") or {}).get("appidStatus") or [])
-            for entry in appid_statuses:
-                if entry.get("appId") == "mcp-db-delete":
-                    raw_status = (entry.get("status") or "").lower()
-                    if raw_status == "ready":
-                        jwt_status = "ready"
-                    else:
-                        jwt_status = "error"
-                        msgs = entry.get("messages") or []
-                        if msgs:
-                            jwt_error = (msgs[0].get("message") or "")[:240]
-                    break
-        except HTTPException:
-            jwt_status = "error"
-            jwt_error = "bearer Component not found"
+    try:
+        data = _diagrid_json("mcpserver", "get", "mcp-server")
+        auth = (
+            (data.get("spec", {}) or {})
+            .get("endpoint", {})
+            .get("streamableHTTP", {})
+            .get("auth", {})
+        )
+        jwt_on = bool(auth.get("oauth2"))
+
+        if jwt_on:
+            status = (data.get("status", {}) or {}).get("status", "").lower()
+            if status == "ready":
+                jwt_status = "ready"
+            elif status in ("updating", ""):
+                jwt_status = "updating"
+            else:
+                jwt_status = "error"
+                messages = (data.get("status", {}) or {}).get("messages") or []
+                app_statuses = (data.get("status", {}) or {}).get("appIdStatus") or []
+                for entry in app_statuses:
+                    for msg in entry.get("messages") or []:
+                        jwt_error = (msg.get("message") or "")[:240]
+                        break
+                    if jwt_error:
+                        break
+                if not jwt_error and messages:
+                    jwt_error = (messages[0].get("message") or "")[:240]
+    except HTTPException:
+        jwt_status = "error"
+        jwt_error = "MCPServer resource not found"
 
     return {
         "matrix": matrix,
         "jwtMiddleware": jwt_on,
-        "jwtMiddlewareStatus": jwt_status,        # "ready" | "error" | "absent"
+        "jwtMiddlewareStatus": jwt_status,
         "jwtMiddlewareError": jwt_error,
     }
 
@@ -340,39 +379,38 @@ def policy_apply(payload: dict = Body(...)) -> dict:
             "jwtMiddleware": bool
         }
 
-    Computes the diff vs. current configured state and runs the minimum
-    set of diagrid commands to reach the target. Returns the list of
-    changed cell keys ("role:op") plus whether JWT middleware moved.
+    Diffs vs. current state and runs the minimum set of
+    `diagrid mcpserver access grant/revoke` commands to reach the target.
     """
     matrix = payload.get("matrix") or {}
     jwt_target = bool(payload.get("jwtMiddleware"))
 
-    # Read current state so we only push what changed
     current = policy_configured()
     cur_matrix: dict = current["matrix"]
     cur_jwt: bool = current["jwtMiddleware"]
 
     changed_cells: list[str] = []
-    changed_cols: set[str] = set()
 
     for role in ("analyst", "ops", "admin"):
-        for op in OP_TO_CONFIG:
+        for op in OP_TO_TOOLS:
             target = bool((matrix.get(role) or {}).get(op))
             if target != cur_matrix[role][op]:
                 changed_cells.append(f"{role}:{op}")
-                changed_cols.add(op)
+                tools = ",".join(OP_TO_TOOLS[op])
+                cmd_verb = "grant" if target else "revoke"
+                cmd = [
+                    "diagrid", "mcpserver", "access", cmd_verb, "mcp-server",
+                    "--caller", f"{role}-agent",
+                    "--allow-tools", tools,
+                    "--project", PROJECT,
+                ]
+                if not target:
+                    cmd += ["--approve"]
+                _run_diagrid(cmd)
 
     jwt_changed = (jwt_target != cur_jwt)
     if jwt_changed:
-        changed_cols.add("delete")  # JWT lives on db-delete
-
-    # Apply per affected column
-    for op in changed_cols:
-        cfg_name = OP_TO_CONFIG[op]
-        if op == "delete":
-            _apply_db_delete(matrix, jwt_target)
-        else:
-            _apply_imperative(cfg_name, op, matrix)
+        _apply_jwt_middleware(jwt_target)
 
     return {
         "changedCells": changed_cells,
@@ -380,43 +418,50 @@ def policy_apply(payload: dict = Body(...)) -> dict:
     }
 
 
-def _apply_imperative(cfg_name: str, op: str, matrix: dict) -> None:
-    """Run `diagrid configuration update` for db-query / db-write."""
-    flags = []
-    for role in ("analyst", "ops", "admin"):
-        action = "allow" if (matrix.get(role) or {}).get(op) else "deny"
-        flags.extend(["--policy", f"{role}-agent:{action}"])
-    cmd = ["diagrid", "configuration", "update", cfg_name,
-           "--project", PROJECT, "--default-action", "deny", *flags]
-    _run_diagrid(cmd)
-
-
-def _apply_db_delete(matrix: dict, jwt_on: bool) -> None:
-    """Declarative apply for db-delete so we can include the appHttpPipeline
-    (JWT bearer middleware) in the same write."""
-    policies_yaml = []
-    for role in ("analyst", "ops", "admin"):
-        action = "allow" if (matrix.get(role) or {}).get("delete") else "deny"
-        policies_yaml.append(f"      - appId: {role}-agent\n        defaultAction: {action}")
+def _apply_jwt_middleware(jwt_on: bool) -> None:
+    """Add or remove Catalyst's own OAuth2 client-credentials auth on the
+    MCPServer resource (see ../oauth2/setup.sh / teardown.sh). mcp-server's
+    bearer middleware always requires a JWT (baseline, set once by
+    ../setup.sh) — this is what actually supplies one. Preserves the
+    resource's current endpoint URL.
+    """
+    data = _diagrid_json("mcpserver", "get", "mcp-server")
+    current_url = (
+        (data.get("spec", {}) or {})
+        .get("endpoint", {})
+        .get("streamableHTTP", {})
+        .get("url", "")
+    )
+    if not current_url:
+        raise HTTPException(status_code=502, detail="could not read mcp-server's current endpoint URL")
 
     yaml_doc = (
         "apiVersion: dapr.io/v1alpha1\n"
-        "kind: Configuration\n"
+        "kind: MCPServer\n"
         "metadata:\n"
-        "  name: db-delete\n"
+        "  name: mcp-server\n"
         "spec:\n"
-        "  accessControl:\n"
-        "    defaultAction: deny\n"
-        "    policies:\n"
-        + "\n".join(policies_yaml) + "\n"
+        "  endpoint:\n"
+        "    streamableHTTP:\n"
+        f"      url: {current_url}\n"
     )
     if jwt_on:
+        keycloak_public_url = os.environ.get("KEYCLOAK_PUBLIC_URL", "http://localhost:8080")
+        keycloak_realm = os.environ.get("KEYCLOAK_REALM", "secure-mcp")
+        keycloak_audience = os.environ.get("KEYCLOAK_AUDIENCE", "https://secure-mcp-demo/")
+        client_secret = os.environ.get("CATALYST_PROXY_CLIENT_SECRET", "catalyst-proxy-secret")
+        issuer = f"{keycloak_public_url}/realms/{keycloak_realm}/protocol/openid-connect/token"
         yaml_doc += (
-            "  appHttpPipeline:\n"
-            "    handlers:\n"
-            "      - name: bearer\n"
-            "        type: middleware.http.bearer\n"
+            "      auth:\n"
+            "        oauth2:\n"
+            f"          issuer: {issuer}\n"
+            f"          audience: {keycloak_audience}\n"
+            "          clientID: catalyst-proxy\n"
+            "          scopes: []\n"
+            f"          clientSecret: {client_secret}\n"
         )
+    # else: omitting `auth` entirely removes Catalyst's OAuth2 config —
+    # nothing attaches a JWT, so every call 401s at the bearer middleware.
 
     with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
         f.write(yaml_doc)
@@ -428,6 +473,66 @@ def _apply_db_delete(matrix: dict, jwt_on: bool) -> None:
             os.unlink(path)
         except OSError:
             pass
+
+
+@app.post("/api/jwt-preview")
+def jwt_preview() -> dict:
+    """Independently perform a client_credentials grant against Keycloak
+    using the same catalyst-proxy client Catalyst itself uses server-side
+    (see _apply_jwt_middleware above). This is NOT the token Catalyst
+    attaches to any given /api/invoke call — Catalyst mints and attaches
+    its own token internally, invisible to this backend. This endpoint
+    exists purely to fetch and show an illustrative, real JWT for the same
+    client identity — same issuer/audience/client, distinct token instance.
+    """
+    keycloak_public_url = os.environ.get("KEYCLOAK_PUBLIC_URL", "http://localhost:8080")
+    keycloak_realm = os.environ.get("KEYCLOAK_REALM", "secure-mcp")
+    client_secret = os.environ.get("CATALYST_PROXY_CLIENT_SECRET", "catalyst-proxy-secret")
+    token_url = f"{keycloak_public_url}/realms/{keycloak_realm}/protocol/openid-connect/token"
+
+    import httpx
+
+    fetched_at = time.time()
+    try:
+        resp = httpx.post(
+            token_url,
+            data={
+                "grant_type": "client_credentials",
+                "client_id": "catalyst-proxy",
+                "client_secret": client_secret,
+            },
+            timeout=10,
+        )
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=502, detail=f"could not reach Keycloak at {token_url}: {e}")
+
+    if resp.status_code != 200:
+        raise HTTPException(
+            status_code=502,
+            detail=f"Keycloak token endpoint returned {resp.status_code}: {resp.text[:300]}",
+        )
+
+    try:
+        body = resp.json()
+    except ValueError:
+        raise HTTPException(status_code=502, detail="Keycloak returned a non-JSON token response")
+
+    token = body.get("access_token")
+    if not token:
+        raise HTTPException(status_code=502, detail="Keycloak response had no access_token field")
+
+    try:
+        header, claims = _decode_jwt_for_display(token)
+    except (ValueError, json.JSONDecodeError) as e:
+        raise HTTPException(status_code=502, detail=f"fetched token could not be decoded for display: {e}")
+
+    return {
+        "token": token,
+        "header": header,
+        "claims": claims,
+        "fetchedAt": fetched_at,
+        "expiresInSeconds": body.get("expires_in"),
+    }
 
 
 def _run_diagrid(cmd: list[str]) -> None:
@@ -442,7 +547,7 @@ def _run_diagrid(cmd: list[str]) -> None:
 # ─── Invoke ───────────────────────────────────────────────────────────────
 
 VERB_OF = {
-    "query":  {"name": "list_employees",  "args": "limit=100"},
+    "query":  {"name": "query",           "args": "sql='SELECT * FROM employees ORDER BY id'"},
     "write":  {"name": "insert_employee", "args": 'name="Demo Target", email="demo-target@example.com"'},
     "delete": {"name": "delete_employee", "args": 'where name="Demo Target"'},
 }
@@ -460,6 +565,12 @@ def _extract_status(exc: BaseException, _seen: set | None = None) -> int | None:
     code = getattr(resp, "status_code", None)
     if code:
         return code
+    # Catalyst proxies an mcp-server-side HTTP error (e.g. our own bearer
+    # JWT rejection) as an MCP-protocol-level error, not a raw HTTP
+    # response — surfaces as McpError("upstream HTTP 401: ...").
+    match = re.search(r"HTTP (\d{3})", str(exc))
+    if match:
+        return int(match.group(1))
     for sub in getattr(exc, "exceptions", []) or []:
         s = _extract_status(sub, _seen)
         if s:
@@ -492,43 +603,13 @@ def _lookup_demo_target_id() -> int | None:
             pass
 
 
-def _fetch_keycloak_jwt() -> str:
-    import httpx
-    missing = [
-        v for v in ("KEYCLOAK_URL", "KEYCLOAK_REALM", "KEYCLOAK_CLIENT_ID", "KEYCLOAK_CLIENT_SECRET")
-        if not os.environ.get(v)
-    ]
-    if missing:
-        raise RuntimeError(
-            f"UI backend missing env vars: {', '.join(missing)} "
-            f"(export them before launching ./ui_backend/run.sh)"
-        )
-    url = (
-        f"{os.environ['KEYCLOAK_URL']}/realms/{os.environ['KEYCLOAK_REALM']}"
-        f"/protocol/openid-connect/token"
-    )
-    resp = httpx.post(
-        url,
-        data={
-            "grant_type": "client_credentials",
-            "client_id": os.environ["KEYCLOAK_CLIENT_ID"],
-            "client_secret": os.environ["KEYCLOAK_CLIENT_SECRET"],
-        },
-        timeout=10,
-    )
-    resp.raise_for_status()
-    return resp.json()["access_token"]
-
-
 @app.post("/api/invoke")
 async def invoke(payload: dict = Body(...)) -> dict:
-    import time
     from mcp import ClientSession
     from mcp.client.streamable_http import streamablehttp_client
 
     role = payload.get("role")
     op = payload.get("op")
-    jwt_presented = bool(payload.get("jwtPresented"))
     source = payload.get("source", "ui")
 
     if role not in ("analyst", "ops", "admin"):
@@ -536,19 +617,13 @@ async def invoke(payload: dict = Body(...)) -> dict:
     if op not in OP_TO_SERVER:
         raise HTTPException(status_code=400, detail="invalid op")
 
-    # Identity + endpoint
     catalyst_token = _agent_token(role)
 
-    # Prefer the standard Dapr SDK env var (set by the chart from
-    # catalyst.httpEndpoint). Fall back to a CLI call so the local-dev
-    # path keeps working without any extra setup.
     endpoint = os.environ.get("DAPR_HTTP_ENDPOINT") or ""
     if not endpoint:
         proj_data = _diagrid_project_get()
         endpoint = (((proj_data.get("status") or {}).get("endpoints") or {}).get("http") or {}).get("url") or ""
 
-    # Op → tool + args
-    server = OP_TO_SERVER[op]
     if op == "query":
         tool, args = "query", {"sql": "SELECT * FROM employees ORDER BY id"}
     elif op == "write":
@@ -563,26 +638,25 @@ async def invoke(payload: dict = Body(...)) -> dict:
     else:
         tool = "delete_employee"
         target_id = _lookup_demo_target_id()
-        # If Demo Target doesn't exist, send a sentinel id so the request
-        # still traverses every gate before the SQL becomes a no-op.
         args = {"employee_id": target_id if target_id else 999_999_999}
 
     verb = VERB_OF[op]
 
-    # Optional JWT
-    jwt_token = None
-    jwt_error = None
-    if jwt_presented:
-        try:
-            jwt_token = _fetch_keycloak_jwt()
-        except Exception as e:
-            jwt_error = str(e)[:120]
+    # mcp-server always requires a bearer JWT, verified in its own
+    # application code (servers/mcp_server.py). It's Catalyst's own job to
+    # attach one, via OAuth2 client-credentials configured on the MCPServer
+    # resource (../oauth2/setup.sh) — this backend, like any caller, never
+    # fetches or presents a JWT itself. Report the current global state for
+    # the UI; a transient diagrid-CLI hiccup here shouldn't fail the whole
+    # invoke, so default to "unknown" (reported as False) rather than 500.
+    try:
+        jwt_configured = bool(policy_configured().get("jwtMiddleware"))
+    except HTTPException:
+        jwt_configured = False
 
     headers = {"dapr-api-token": catalyst_token}
-    if jwt_token:
-        headers["Authorization"] = f"Bearer {jwt_token}"
 
-    url = f"{endpoint}/v1.0/invoke/{server}/method/mcp"
+    url = f"{endpoint}/v1.0/diagrid/mcp/mcp-server"
 
     t_iso = time.strftime("%H:%M:%S")
     t_start = time.time()
@@ -599,12 +673,9 @@ async def invoke(payload: dict = Body(...)) -> dict:
                 await session.initialize()
                 result = await session.call_tool(tool, args)
                 body = " ".join(getattr(b, "text", "") for b in (result.content or []))
-        # Brief pause so the server's fire-and-forget heartbeat lands in
-        # the event log before we read it back to enrich the response.
         await asyncio.sleep(0.05)
-        hb = _recent_heartbeat(server, tool)
+        hb = _recent_heartbeat("mcp-server", tool)
         if hb:
-            # Use the actual args the server saw — more honest than what we sent
             verb = {
                 "name": tool,
                 "args": ", ".join(f"{k}={v!r}" for k, v in (hb.get("args") or {}).items()),
@@ -614,14 +685,11 @@ async def invoke(payload: dict = Body(...)) -> dict:
         status = st or 500
         saw = False
         if status == 401:
-            # 401 from a UI button always comes from the JWT layer (we
-            # always send a valid Catalyst token). Edge-fail is reserved
-            # for terminal-driven spoofs in Phase 4.
             kind = "jwt-deny"
-            reason = jwt_error or "JWT missing / invalid / wrong audience"
+            reason = "Catalyst's own OAuth2 auth isn't configured on the MCPServer resource yet"
         elif status == 403:
             kind = "acl-deny"
-            reason = f"Catalyst ACL denied {role}-agent on {server}"
+            reason = f"Catalyst ACL denied {role}-agent tool: {tool}"
         else:
             kind = "acl-deny"
             reason = f"unexpected status {status}"
@@ -631,8 +699,8 @@ async def invoke(payload: dict = Body(...)) -> dict:
         "status": status,
         "role": role,
         "op": op,
-        "server": server,
-        "jwt": jwt_presented,
+        "server": "mcp-server",
+        "jwt": jwt_configured,
         "source": source,
         "t": t_iso,
         "verb": verb,
@@ -640,21 +708,24 @@ async def invoke(payload: dict = Body(...)) -> dict:
         "reason": reason,
         "durationMs": int((time.time() - t_start) * 1000),
         "body": body,
-        "headersSent": _headers_sent(catalyst_token, jwt_token),
-        "path": f"/v1.0/invoke/{server}/method/mcp",
+        "headersSent": _headers_sent(catalyst_token, None),
+        "path": "/v1.0/diagrid/mcp/mcp-server",
         "method": "POST",
     }
 
 
 # ─── Spoofs (Phase 4) ─────────────────────────────────────────────────────
-# Adversarial scenarios row: fire real malicious HTTP against Catalyst and
-# return the same result shape the Result panel renders. Uses httpx
-# directly (not the MCP client) so we can construct exactly the wrong
-# headers without the client adding defaults.
+# Adversarial scenarios: fire real malicious HTTP against Catalyst and
+# return the same result shape the Result panel renders.
+#
+# no-jwt-delete / bad-jwt-delete are gone: those simulated a CALLER
+# presenting no/malformed JWT, which no longer means anything — Catalyst
+# attaches its own JWT (or doesn't) via the MCPServer resource's OAuth2
+# config, independent of what any caller does. There's nothing left for a
+# caller to spoof at that layer.
 
 SPOOF_KINDS = {
     "no-token", "forged-token", "analyst-on-delete",
-    "no-jwt-delete", "bad-jwt-delete",
 }
 
 _INIT_PAYLOAD = {
@@ -669,23 +740,11 @@ _INIT_PAYLOAD = {
 }
 
 
-def _mint_bad_jwt() -> str:
-    import base64
-    header = base64.urlsafe_b64encode(json.dumps({"alg": "HS256", "typ": "JWT"}).encode()).rstrip(b"=").decode()
-    payload = base64.urlsafe_b64encode(json.dumps({
-        "iss": "http://localhost:8080/realms/secure-mcp",
-        "aud": "https://different-api/",
-        "exp": int(time.time()) + 3600,
-        "iat": int(time.time()),
-        "sub": "spoofer",
-    }).encode()).rstrip(b"=").decode()
-    sig = base64.urlsafe_b64encode(b"fake-signature").rstrip(b"=").decode()
-    return f"{header}.{payload}.{sig}"
-
-
 @app.post("/api/spoof")
-def spoof(payload: dict = Body(...)) -> dict:
+async def spoof(payload: dict = Body(...)) -> dict:
     import httpx
+    from mcp import ClientSession
+    from mcp.client.streamable_http import streamablehttp_client
 
     kind = payload.get("kind")
     if kind not in SPOOF_KINDS:
@@ -696,62 +755,85 @@ def spoof(payload: dict = Body(...)) -> dict:
         proj = _diagrid_project_get()
         endpoint = (((proj.get("status") or {}).get("endpoints") or {}).get("http") or {}).get("url") or ""
 
-    headers = {
+    url = f"{endpoint}/v1.0/diagrid/mcp/mcp-server"
+
+    headers: dict[str, str] = {
         "Content-Type": "application/json",
         "Accept": "application/json, text/event-stream",
     }
-    target_server = "mcp-db-query"   # default for no-token / forged-token
     role = "external"
     op = "query"
     verb_label = "spoof"
+    reason_template = ""
 
+    t_iso = time.strftime("%H:%M:%S")
+    t_start = time.time()
+
+    # analyst-on-delete: use the actual MCP client to call delete_employee so
+    # the tool-level ACL (403) is triggered — a raw session initialize alone
+    # succeeds because the analyst has query access.
+    if kind == "analyst-on-delete":
+        analyst_token = _agent_token("analyst")
+        role = "analyst"
+        op = "delete"
+        verb_label = "delete_employee"
+        reason_template = "Catalyst ACL denied analyst-agent tool: delete_employee"
+        mcp_headers = {"dapr-api-token": analyst_token}
+
+        status = 200
+        result_kind = "ok"
+        saw_traffic = True
+        try:
+            async with streamablehttp_client(url, headers=mcp_headers) as (rd, wr, _):
+                async with ClientSession(rd, wr) as session:
+                    await session.initialize()
+                    await session.call_tool("delete_employee", {"employee_id": 999_999_999})
+        except BaseException as e:
+            st = _extract_status(e)
+            status = st or 500
+            saw_traffic = False
+            result_kind = "acl-deny" if status == 403 else "edge-fail"
+
+        return {
+            "kind": result_kind,
+            "status": status,
+            "role": role,
+            "op": op,
+            "server": "mcp-server",
+            "jwt": False,
+            "source": "external",
+            "t": t_iso,
+            "verb": {"name": verb_label, "args": "spoof: analyst-on-delete"},
+            "sawTraffic": saw_traffic,
+            "reason": reason_template,
+            "durationMs": int((time.time() - t_start) * 1000),
+            "attackKind": kind,
+            "headersSent": _headers_sent(analyst_token, None),
+            "path": "/v1.0/diagrid/mcp/mcp-server",
+            "method": "POST",
+        }
+
+    # Remaining spoofs use raw HTTP (they target Catalyst's edge, above
+    # tool-level ACL). Note a 401 here means the *dapr-api-token* was
+    # rejected at Catalyst's edge — a different 401 than the one mcp-server's
+    # bearer middleware returns when Catalyst's own OAuth2 auth isn't
+    # configured (see ../oauth2/setup.sh / DEMO.md's step-up beat).
     if kind == "no-token":
-        # POST with no dapr-api-token at all
         reason_template = "no bearer token presented"
     elif kind == "forged-token":
         headers["dapr-api-token"] = "this-token-was-never-issued-by-catalyst"
         reason_template = "bearer token signature invalid"
-    elif kind == "analyst-on-delete":
-        # Real analyst token, against mcp-db-delete → ACL denies
-        headers["dapr-api-token"] = _agent_token("analyst")
-        target_server = "mcp-db-delete"
-        op = "delete"
-        verb_label = "delete_employee"
-        reason_template = "Catalyst ACL denied analyst-agent on mcp-db-delete"
-    elif kind == "no-jwt-delete":
-        # Real admin token, no JWT header, against mcp-db-delete → middleware denies
-        headers["dapr-api-token"] = _agent_token("admin")
-        target_server = "mcp-db-delete"
-        op = "delete"
-        verb_label = "delete_employee"
-        reason_template = "JWT middleware: no Authorization header"
-    elif kind == "bad-jwt-delete":
-        # Real admin token + bogus JWT (wrong aud) → middleware denies
-        headers["dapr-api-token"] = _agent_token("admin")
-        headers["Authorization"] = f"Bearer {_mint_bad_jwt()}"
-        target_server = "mcp-db-delete"
-        op = "delete"
-        verb_label = "delete_employee"
-        reason_template = "JWT middleware: signature / audience invalid"
-
-    url = f"{endpoint}/v1.0/invoke/{target_server}/method/mcp"
-    t_iso = time.strftime("%H:%M:%S")
-    t_start = time.time()
 
     try:
         resp = httpx.post(url, headers=headers, json=_INIT_PAYLOAD, timeout=10)
         status = resp.status_code
-    except Exception as e:
+    except Exception:
         status = 0
 
     duration_ms = int((time.time() - t_start) * 1000)
 
     if status == 200:
         result_kind = "ok"
-    elif status == 401 and target_server == "mcp-db-delete" and "Authorization" in headers and kind == "bad-jwt-delete":
-        result_kind = "jwt-deny"
-    elif status == 401 and target_server == "mcp-db-delete" and "Authorization" not in headers and kind == "no-jwt-delete":
-        result_kind = "jwt-deny"
     elif status == 401:
         result_kind = "edge-fail"
     elif status == 403:
@@ -761,8 +843,6 @@ def spoof(payload: dict = Body(...)) -> dict:
 
     saw_traffic = (status == 200)
 
-    # Reconstruct the (already-masked) view of what we sent so the Result
-    # panel can show the audience what auth shape went over the wire.
     catalyst_token_sent = headers.get("dapr-api-token") or ""
     jwt_sent = ""
     auth = headers.get("Authorization") or ""
@@ -774,7 +854,7 @@ def spoof(payload: dict = Body(...)) -> dict:
         "status": status,
         "role": role,
         "op": op,
-        "server": target_server,
+        "server": "mcp-server",
         "jwt": kind == "bad-jwt-delete",
         "source": "external",
         "t": t_iso,
@@ -784,7 +864,7 @@ def spoof(payload: dict = Body(...)) -> dict:
         "durationMs": duration_ms,
         "attackKind": kind,
         "headersSent": _headers_sent(catalyst_token_sent, jwt_sent),
-        "path": f"/v1.0/invoke/{target_server}/method/mcp",
+        "path": "/v1.0/diagrid/mcp/mcp-server",
         "method": "POST",
     }
 
@@ -793,8 +873,7 @@ def spoof(payload: dict = Body(...)) -> dict:
 
 @app.post("/api/events")
 def ingest_event(evt: dict = Body(...)) -> dict:
-    """MCP servers POST tool-invocation heartbeats here.
-    Best-effort: we never fail an MCP call because the UI is offline."""
+    """MCP servers POST tool-invocation heartbeats here."""
     _publish_event(evt)
     return {"ok": True}
 
@@ -806,7 +885,6 @@ async def stream_events(request: Request) -> EventSourceResponse:
     queue: asyncio.Queue = asyncio.Queue(maxsize=64)
     _subscribers.append(queue)
 
-    # Replay the last 20 events so a reload doesn't lose context.
     recent = list(_event_log)[-20:]
 
     async def gen():
@@ -820,7 +898,6 @@ async def stream_events(request: Request) -> EventSourceResponse:
                     evt = await asyncio.wait_for(queue.get(), timeout=15.0)
                     yield {"event": "tool_invoked", "data": json.dumps(evt)}
                 except asyncio.TimeoutError:
-                    # SSE keepalive — comment lines are ignored by EventSource
                     yield {"event": "ping", "data": ""}
         finally:
             try:
@@ -833,6 +910,4 @@ async def stream_events(request: Request) -> EventSourceResponse:
 
 # ─── Static UI mount ─────────────────────────────────────────────────────
 
-# The UI is served as-is at /. Babel-in-browser handles JSX transform.
-# `html=True` makes StaticFiles serve index.html when the root path is requested.
 app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="ui")

@@ -7,12 +7,15 @@ Usage:
   uv run python oauth2/admin_workflow.py delete <employee_id>
       → deletes the employee with that id
 
-Both calls go through Catalyst and require admin's Catalyst API token.
-The delete additionally requires a valid Keycloak JWT (the bearer
-middleware on mcp-db-delete enforces it).
+Both calls go through Catalyst via the MCPServer proxy endpoint and require
+admin's Catalyst API token. mcp-server also requires a valid Keycloak JWT on
+every call — checked in its own application code (see
+../servers/mcp_server.py) — but that JWT is Catalyst's own, attached
+automatically via OAuth2 client-credentials configured on the MCPServer
+resource (./setup.sh). Nothing here handles a JWT directly.
 
 Env vars expected:
-  DAPR_HTTP_ENDPOINT, DAPR_API_TOKEN, KEYCLOAK_JWT
+  DAPR_HTTP_ENDPOINT, DAPR_API_TOKEN
 """
 
 import argparse
@@ -26,16 +29,13 @@ from mcp.client.streamable_http import streamablehttp_client
 
 DAPR_HTTP_ENDPOINT = os.environ["DAPR_HTTP_ENDPOINT"]
 DAPR_API_TOKEN = os.environ["DAPR_API_TOKEN"]
-KEYCLOAK_JWT = os.environ["KEYCLOAK_JWT"]
+
+MCP_URL = f"{DAPR_HTTP_ENDPOINT}/v1.0/diagrid/mcp/mcp-server"
 
 
-async def _call(appid: str, tool: str, args: dict) -> str:
-    url = f"{DAPR_HTTP_ENDPOINT}/v1.0/invoke/{appid}/method/mcp"
-    headers = {
-        "dapr-api-token": DAPR_API_TOKEN,
-        "Authorization": f"Bearer {KEYCLOAK_JWT}",
-    }
-    async with streamablehttp_client(url, headers=headers) as (read, write, _):
+async def _call(tool: str, args: dict) -> str:
+    headers = {"dapr-api-token": DAPR_API_TOKEN}
+    async with streamablehttp_client(MCP_URL, headers=headers) as (read, write, _):
         async with ClientSession(read, write) as session:
             await session.initialize()
             result = await session.call_tool(tool, args)
@@ -44,7 +44,6 @@ async def _call(appid: str, tool: str, args: dict) -> str:
 
 async def insert() -> int:
     resp = await _call(
-        "mcp-db-write",
         "insert_employee",
         {
             "name": "Demo Target",
@@ -63,11 +62,7 @@ async def insert() -> int:
 
 
 async def delete(employee_id: int) -> None:
-    resp = await _call(
-        "mcp-db-delete",
-        "delete_employee",
-        {"employee_id": employee_id},
-    )
+    resp = await _call("delete_employee", {"employee_id": employee_id})
     print(resp)
 
 

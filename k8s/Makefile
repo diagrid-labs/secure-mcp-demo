@@ -86,24 +86,25 @@ help:
 	@echo "  make uninstall-ingress  uninstall nginx-ingress"
 
 fqdns:
-	@echo "ui-backend:      http://$(INGRESS_FQDN)/"
-	@echo "keycloak:        http://$(INGRESS_FQDN)/keycloak"
-	@echo "mcp-db-query:    http://$(INGRESS_FQDN)/mcp/query"
-	@echo "mcp-db-write:    http://$(INGRESS_FQDN)/mcp/write"
-	@echo "mcp-db-delete:   http://$(INGRESS_FQDN)/mcp/delete"
+	@echo "ui-backend:   http://$(INGRESS_FQDN)/"
+	@echo "keycloak:     http://$(INGRESS_FQDN)/keycloak"
+	@echo "mcp-server:   http://$(INGRESS_FQDN)/mcp"
 
 # Multi-arch via buildx: AKS nodes are linux/amd64, local dev (Apple Silicon)
 # is linux/arm64. One manifest covers both; --push goes straight to Docker Hub
 # (buildx can't load multi-arch manifests into the local daemon).
 #
 # BUILDX_BUILDER must point at a `docker-container` driver builder — the
-# default `docker` driver only builds for the host architecture. Run
-# `docker buildx ls` to see your builders; create one with
-# `docker buildx create --name multiarch --driver docker-container`.
+# default `docker` driver only builds for the host architecture.
+# build-images creates it automatically if it doesn't exist yet (idempotent —
+# reuses any existing docker-container builder of this name, including one
+# you already created by hand).
 PLATFORMS      ?= linux/amd64,linux/arm64
 BUILDX_BUILDER ?= multiarch
 
 build-images:
+	docker buildx inspect $(BUILDX_BUILDER) > /dev/null 2>&1 \
+	  || docker buildx create --name $(BUILDX_BUILDER) --driver docker-container
 	docker buildx build --builder $(BUILDX_BUILDER) --platform $(PLATFORMS) --push \
 	  -f docker/mcp-server.Dockerfile -t $(REGISTRY)/secure-mcp-server:$(IMAGE_TAG) $(REPO_ROOT)
 	docker buildx build --builder $(BUILDX_BUILDER) --platform $(PLATFORMS) --push \
@@ -247,15 +248,15 @@ install: deps
 	@echo "Then run:  make register-appids"
 
 register-appids:
-	@echo ">>> Registering MCP server path-based endpoints with Catalyst"
-	@echo "    (verify --app-endpoint against \`diagrid appid update --help\`"
-	@echo "     if your CLI version uses a different flag name)"
-	diagrid appid update mcp-db-query  --project $(DIAGRID_PROJECT) --app-endpoint http://$(INGRESS_FQDN)/mcp/query
-	diagrid appid update mcp-db-write  --project $(DIAGRID_PROJECT) --app-endpoint http://$(INGRESS_FQDN)/mcp/write
-	diagrid appid update mcp-db-delete --project $(DIAGRID_PROJECT) --app-endpoint http://$(INGRESS_FQDN)/mcp/delete
+	@echo ">>> Applying MCPServer resource with production FQDN to Catalyst"
+	@TMP=$$(mktemp /tmp/secure-mcp-mcpserver-XXXXXX.yaml); \
+	sed 's|http://localhost:8001/mcp|http://$(INGRESS_FQDN)/mcp|g' \
+	  $(REPO_ROOT)/resources/mcp-server.yaml > "$$TMP"; \
+	diagrid apply --project $(DIAGRID_PROJECT) -f "$$TMP"; \
+	rm -f "$$TMP"
 	@echo ""
 	@echo "Verify Catalyst → app reachability:"
-	@echo "  diagrid appid get mcp-db-query --project $(DIAGRID_PROJECT) -o json | jq '.status'"
+	@echo "  diagrid mcpserver get mcp-server --project $(DIAGRID_PROJECT) -o json | jq '.status'"
 
 uninstall:
 	-helm uninstall $(RELEASE) -n $(NAMESPACE)

@@ -77,19 +77,26 @@ spec:
                   key: present
                   optional: true
 
-            # Keycloak step-up auth — UI backend mints JWTs via
-            # client_credentials when the operator toggles JWT on.
-            - name: KEYCLOAK_URL
-              value: "http://{{ include "secure-mcp.keycloakHost" . }}:80/keycloak"
+            # Catalyst's own OAuth2 client-credentials (Catalyst -> mcp-server).
+            # ui_backend's step-up toggle (POST /api/policy/apply) uses these
+            # to configure/remove Catalyst's own OAuth2 auth on the MCPServer
+            # resource — see oauth2/setup.sh and README.md's "OIDC / bearer
+            # middleware". Must be Catalyst's cloud-reachable public URL, not
+            # an in-cluster address. ui_backend also calls Keycloak directly
+            # with these same values (POST /api/jwt-preview) to fetch an
+            # illustrative JWT for display — never used for real auth, purely
+            # to show the audience what one looks like.
+            - name: KEYCLOAK_PUBLIC_URL
+              value: "http://{{ .Values.ingress.host }}/keycloak"
             - name: KEYCLOAK_REALM
-              value: {{ .Values.keycloakClient.realm | quote }}
-            - name: KEYCLOAK_CLIENT_ID
-              value: {{ .Values.keycloakClient.clientId | quote }}
-            - name: KEYCLOAK_CLIENT_SECRET
+              value: {{ .Values.catalystProxyClient.realm | quote }}
+            - name: KEYCLOAK_AUDIENCE
+              value: {{ .Values.catalystProxyClient.audience | quote }}
+            - name: CATALYST_PROXY_CLIENT_SECRET
               valueFrom:
                 secretKeyRef:
-                  name: {{ .Values.keycloakClient.clientSecretRef.name }}
-                  key:  {{ .Values.keycloakClient.clientSecretRef.key }}
+                  name: {{ .Values.catalystProxyClient.clientSecretRef.name }}
+                  key:  {{ .Values.catalystProxyClient.clientSecretRef.key }}
 
             # UI backend reads employees directly from Postgres for the
             # Result panel's table; uses the superuser to bypass per-op

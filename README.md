@@ -1,44 +1,57 @@
 # secure-mcp-demo
 
-Per-operation access control on MCP tool calls, enforced by Diagrid Catalyst,
-with layered OIDC enforcement via Keycloak on destructive operations.
+Per-tool access control on MCP tool calls, enforced by Diagrid Catalyst,
+with mandatory OIDC enforcement via Keycloak.
 
 Three agents (`analyst`, `ops`, `admin`) with distinct Catalyst identities
-probe three per-op MCP servers (`mcp-db-query`, `mcp-db-write`,
-`mcp-db-delete`). Catalyst configurations control which identity can invoke
-which operation. The destructive op (`mcp-db-delete`) additionally requires
-a valid Keycloak-issued JWT — step-up auth for high-risk operations.
+call a single MCP server (`mcp-server`) through Catalyst's MCP proxy
+endpoint. Two independent gates apply to every call:
 
-**Secure by default:** after `./setup.sh`, every operation is denied for
-every agent. Access is granted progressively during the demo. The canonical
-target matrix:
+1. **Catalyst's MCPServer access policy** — per-tool ACL: which identity
+   can invoke which tool.
+2. **Keycloak JWT verification, in `mcp_server.py` itself** — mandatory, not
+   optional. Every call to `mcp-server` requires a valid Keycloak-issued
+   JWT, on top of the Catalyst dapr-api-token; the server checks its
+   signature, issuer, and audience against Keycloak's JWKS before any tool
+   runs. Per
+   <https://docs.diagrid.io/develop/mcp/mcp-authentication#oauth-20-client-credentials>,
+   that JWT is **Catalyst's own** — fetched and attached automatically via
+   OAuth2 client-credentials configured directly on the MCPServer resource,
+   using Catalyst's own Keycloak client (`catalyst-proxy`). No agent ever
+   fetches or presents a JWT itself. (There's no Dapr sidecar in this
+   architecture to enforce this at the platform level — an MCPServer
+   resource's app-id is Catalyst-managed and can't have a Configuration
+   attached, so the check has to live in the application.)
+
+**Secure by default:** after `./scripts/setup.sh`, the MCPServer access policy is
+deny-all *and* nothing is configured to satisfy the JWT requirement — every
+call fails regardless of ACL. The demo's step-up beat is `./oauth2/setup.sh`:
+run it and Catalyst starts attaching its own JWT, and calls start succeeding
+(gated from there purely by the ACL matrix). The canonical target matrix,
+once both are set up:
 
 ```
 [analyst-agent]   query:✓  write:✗ (403)  delete:✗ (403)
 [ops-agent]       query:✓  write:✓        delete:✗ (403)
-[admin-agent]     query:✓  write:✓        delete:✓ (with JWT)
+[admin-agent]     query:✓  write:✓        delete:✓
 ```
 
-Admin's `delete` requires both:
-1. Catalyst ACL allow (granted via `grant.sh delete admin` or `up.sh`)
-2. Valid Keycloak JWT presented as `Authorization: Bearer …`
+Before `./oauth2/setup.sh` runs, every cell is `✗ (401)` — even for tools
+the ACL already allows. That's the demo: turn Catalyst's own auth on, watch
+the whole matrix come alive at once.
 
-Without the JWT, admin's delete gets **HTTP 401 from the bearer middleware**
-— even though the ACL allows it. Two independent gates.
-
-Defense in depth: each per-op MCP server connects to Postgres as its own
-DB role. Even if all upstream layers fail, the DB role caps what the
-operation can actually execute.
+Defense in depth: even within the single MCP server, each tool group
+connects to Postgres as its own DB role. Even if all upstream layers fail,
+the DB role caps what each tool can actually execute.
 
 A web UI for driving the demo lives in `ui_backend/` — see that directory
-for setup. The four-phase build is documented in conversation history;
-TL;DR: `cd ui_backend && ./run.sh`, then open `http://localhost:5050`.
+for setup. TL;DR: `cd ui_backend && ./run.sh`, then open `http://localhost:5050`.
 
 ---
 
 ## Running the demo
 
-**For the full presenter's walkthrough — pre-demo setup, the 8 beats in
+**For the full presenter's walkthrough — pre-demo setup, the demo beats in
 order, and reset between runs — see [DEMO.md](DEMO.md).**
 
 This README documents architecture, file layout, and individual scripts.
@@ -57,69 +70,81 @@ This README documents architecture, file layout, and individual scripts.
 ## Architecture
 
 ```
-Agents (local)              Catalyst Cloud                MCP servers (local)
-────────────                ───────────────               ───────────────────
-analyst-agent ──┐                                        ┌─ mcp-db-query
-ops-agent     ──┼─► dapr-api-token + ACL + bearer mw ──►├─ mcp-db-write
-admin-agent   ──┘   (3-layer cloud-side enforcement)     └─ mcp-db-delete
-                                                                │
-                                                                ▼
-                                                       Postgres (role-scoped
-                                                       DB users = floor)
-
-         Keycloak (local docker + ngrok) ──► issues JWTs that the
-                                              bearer middleware validates
+Agents (local)              Catalyst Cloud                        MCP server (local)
+────────────                ───────────────                       ──────────────────
+analyst-agent ──┐                                                ┌─ query
+ops-agent     ──┼─► dapr-api-token ──► MCPServer ACL ──► own ───►├─ insert_employee
+admin-agent   ──┘     (no JWT)          (per-tool)      OAuth2   ├─ update_salary
+                                                         JWT ──┐ ├─ delete_employee
+                                                                │└─ truncate_table
+                                                                │       │
+                                    Keycloak (local docker      │       ▼
+                                    + ngrok) ◄── client_______───┘  Postgres (role-scoped
+                                    credentials                    DB users = floor)
+                                    (catalyst-proxy client)
 ```
+
+Catalyst — not any agent — fetches its own JWT from Keycloak and attaches
+it to every call it forwards. Agents never see or handle a JWT at all.
 
 Four enforcement layers, each independent:
 1. **Catalyst App Id (token verification)** — confirms calling app-id
-2. **Catalyst ACL policies** — per-op authorization
-3. **Bearer middleware** — JWT signature/audience/issuer validation
+2. **MCPServer access policy** — per-tool authorization (filters `tools/list`; blocks `tools/call`)
+3. **Keycloak JWT verification in `mcp_server.py`** — signature/audience/issuer validation, app-wide, mandatory — the JWT is Catalyst's own, not the agent's
 4. **Postgres role-scoped DB users** — last line of defense
 
 Three teams own them (platform, IAM, data). An attacker must defeat all four.
+
+### How Catalyst enforces tool-level access
+
+Callers reach the MCP server only through Catalyst's MCP proxy endpoint:
+`{DAPR_HTTP_ENDPOINT}/v1.0/diagrid/mcp/mcp-server`. Enforcement happens in two ways:
+
+- **Discovery is filtered.** `tools/list` returns only the tools the calling app-id
+  is granted — an unauthorized tool is invisible, not merely un-callable.
+- **Calls are gated.** An unauthorized `tools/call` is rejected with `403 Forbidden`
+  before the request reaches the server.
 
 ---
 
 ## File layout
 
 ```
-setup.sh                      Catalyst + OIDC setup (one shot, idempotent)
-dev.yaml                      Dapr multi-app run file for 3 servers
-run_demo.sh                   Matrix probe runner. Supports --no-jwt flag.
-reset.sh                      Teardown stale dev sessions + orphan procs
+dev.yaml                      Dapr multi-app run file (single mcp-server app)
 schema.sql                    Postgres tables + role-scoped DB users
 docker-compose.yaml           Postgres + Keycloak
 
+resources/
+  mcp-server.yaml             MCPServer resource (points Catalyst at localhost:8001/mcp)
+
 servers/
-  db_query.py    db_write.py    db_delete.py
+  mcp_server.py               Combined FastMCP server; all tools in one process,
+                              per-tool DB user selection, and Keycloak JWT verification
+                              (TokenVerifier, checked on every call — see "OIDC / bearer
+                              middleware" below)
   common.py                   Postgres connection helper + UI heartbeat hook
   requirements.txt
 
 agents/
-  probe.py                    Matrix probe harness (optionally fetches JWT)
-  agent.py                    LLM-driven scene script (legacy from step 2)
+  probe.py                    Matrix probe harness (calls each tool via mcp-server)
+  agent.py                    LLM-driven scene script
   requirements.txt
 
 scripts/
-  up.sh                       Apply canonical demo matrix in one shot
+  setup.sh                    Catalyst project + App ID + MCPServer setup, and applies
+                              mandatory Keycloak JWT bearer middleware on mcp-server (idempotent)
   down.sh                     Revoke everything — back to deny-all
-  grant.sh <op> <agent>...    Additive grant (preserves other agents)
-  revoke.sh <op> <agent>...   Additive revoke (preserves other agents)
-  keepalive.sh                Keep diagrid dev tunnels warm during demos
-  show_identity.sh            Token fingerprints for all 6 app-ids
-  spoof.sh                    Catalyst-layer spoof attempts
+  reset.sh                    Teardown stale dev sessions + orphan procs
 
 oauth2/
-  bearer-component.yaml       Dapr middleware Component (templated)
-  config-delete-oauth.yaml       Catalyst Configuration with appHttpPipeline
-  setup.sh                    Re-apply OIDC layer (refresh JWKS cache)
-  teardown.sh                 Remove OIDC layer
-  spoof_oauth.sh              JWT-layer spoof attempts
+  setup.sh                    THE step-up demo beat: configures Catalyst's own OAuth2
+                              client-credentials on the MCPServer resource (Catalyst ->
+                              mcp-server auth) — see "OIDC / bearer middleware" below.
+                              No Dapr Component/Configuration involved — see that section
+                              for why the old middleware approach doesn't apply here.
+  teardown.sh                 Removes it — every call goes back to failing (401)
   admin_workflow.sh           End-to-end success: insert + delete real rows
   admin_workflow.py           Admin's MCP calls (insert/delete actions)
-  inspect_token.sh            Decode a JWT, compare with JWKS
-  test_jwt.sh                 Single request with JWT, full HTTP response
 
 ui_backend/
   main.py                     FastAPI server: /api/employees, /api/policy,
@@ -138,11 +163,12 @@ k8s/                          Kubernetes deployment (Helm + Dockerfiles).
                               See k8s/README.md and k8s/CATALYST.md.
 
 keycloak/
-  realm-export.json           Realm + shared M2M client + audience mapper
+  realm-export.json           Realm (sslRequired: none — demo runs HTTP-only, no domain/TLS
+                              yet) + the catalyst-proxy M2M client (Catalyst's own service
+                              identity, see below) + audience mapper. No agent-facing client —
+                              agents never talk to Keycloak.
 
 DEMO.md                       Presenter's walkthrough (start here for demos)
-KNOWN_ISSUES.md               Upstream bugs and workarounds
-TODO.md                       Backlog (gitignored)
 ```
 
 ---
@@ -152,43 +178,48 @@ TODO.md                       Backlog (gitignored)
 ### Matrix probe
 
 ```bash
-./run_demo.sh                       # all 3 agents, uses JWT if env vars set
-./run_demo.sh --no-jwt              # all 3 agents, ignore JWT (step-up beat)
-./run_demo.sh analyst               # single role
-./run_demo.sh --no-jwt analyst      # single role, no JWT
+export DAPR_HTTP_ENDPOINT=$(diagrid project get secure-mcp-demo -o json | jq -r '.status.endpoints.http.url')
+export DAPR_API_TOKEN=$(diagrid appid get analyst-agent --project secure-mcp-demo -o json | jq -r '.status.apiToken')
+AGENT_ROLE=analyst uv run python agents/probe.py
 ```
 
-`run_demo.sh` reads each agent's Catalyst API token via `diagrid appid get`
-and calls `probe.py` directly with `DAPR_HTTP_ENDPOINT` /
-`DAPR_API_TOKEN` (+ optionally Keycloak vars) in env. It doesn't wrap each
-agent in its own `diagrid dev run` — wrapping caused server-side tunnel
-breakage (see [KNOWN_ISSUES.md](KNOWN_ISSUES.md)).
+`probe.py` hits `/v1.0/diagrid/mcp/mcp-server` with the given agent's
+Catalyst API token; Catalyst enforces which tools each agent can call. Swap
+`analyst-agent`/`AGENT_ROLE=analyst` for `ops`/`admin` to probe the other
+roles. If every cell shows `401`, Catalyst's own OAuth2 auth isn't
+configured on the MCPServer resource yet — turn it on from the demo UI, or
+run `./oauth2/setup.sh`.
 
 For **live LLM-driven scenes** (a single agent making real decisions), use
 `diagrid dev run --app-id <agent>` interactively — Ctrl+C when done.
 
-### Granting + revoking (additive)
+### Granting + revoking
 
 ```bash
-./scripts/grant.sh <op> <agent>...
-./scripts/revoke.sh <op> <agent>...
+diagrid mcpserver access grant  mcp-server --caller <agent> --allow-tools <tools> --project secure-mcp-demo --wait
+diagrid mcpserver access revoke mcp-server --caller <agent> --allow-tools <tools> --project secure-mcp-demo --wait --approve
 ```
 
-Both read the current configuration, modify only the named agents' entries,
-and write back the full policy list. Other agents' entries are preserved.
+`<tools>` maps from op:
+| op | tools |
+|----|-------|
+| `query` | `query` |
+| `write` | `insert_employee`, `update_salary` |
+| `delete` | `delete_employee`, `truncate_table` |
 
 Convenience:
 ```bash
-./scripts/up.sh         # Apply canonical matrix (4 grant calls)
-./scripts/down.sh       # Back to deny-all baseline
+./scripts/down.sh       # Revoke every agent, every tool — back to deny-all baseline
 ```
 
-### Identity + spoofs
+There's no "up" equivalent — apply the canonical matrix live with the
+`grant` command above, one caller at a time (see DEMO.md's Beat 2), or
+through the demo UI.
 
+To inspect or test the policy directly:
 ```bash
-./scripts/show_identity.sh          # 7 app-ids with token fingerprints
-./scripts/spoof.sh                  # 3 Catalyst-layer spoofs (no token / forged / wrong role)
-./oauth2/spoof_oauth.sh             # 3 OIDC-layer spoofs (no JWT / malformed / wrong audience)
+diagrid mcpserver access get mcp-server
+diagrid mcpserver access test mcp-server --caller analyst-agent --tool delete_employee
 ```
 
 ### End-to-end destructive workflow (success path)
@@ -197,51 +228,119 @@ Convenience:
 ./oauth2/admin_workflow.sh          # admin inserts + deletes a real row
 ```
 
-Demonstrates both Catalyst ACL and OIDC bearer middleware accepting a
+Demonstrates both MCPServer access policy and bearer middleware accepting a
 legitimate request. Self-resetting (insert + delete on the same row).
 
 ---
 
-## Refreshing OIDC layer
+## OIDC / bearer middleware
 
-If Keycloak rotates signing keys (e.g. after `docker-compose up -d --force-recreate keycloak`)
-or the ngrok URL changes, refresh the bearer Component so Catalyst re-fetches
-the JWKS:
+Per <https://docs.diagrid.io/develop/mcp/mcp-authentication#oauth-20-client-credentials>,
+Catalyst's `MCPServer` resource can hold its own OAuth2 client-credentials
+and fetch/attach a token on every call it forwards — this is **Catalyst
+authenticating itself** to `mcp-server`, not the calling agent. That's the
+mechanism this demo's step-up beat is built on, end to end:
+
+| Piece | What it does | Where |
+|---|---|---|
+| Keycloak JWT verification | Checks the bearer token's signature/issuer/audience against Keycloak's JWKS on every call; rejects with 401 if missing/invalid | `servers/mcp_server.py` (`KeycloakTokenVerifier`, application code) |
+| Catalyst OAuth2 client-credentials | Fetches Catalyst's own JWT via the `catalyst-proxy` Keycloak client and attaches it to every call Catalyst forwards | `spec.endpoint.streamableHTTP.auth.oauth2` on the MCPServer resource — `./oauth2/setup.sh` / `teardown.sh` |
+
+No agent — and no code in `agents/`, `ui_backend/`, or `oauth2/admin_workflow.py`
+— ever fetches or presents a JWT. That's entirely Catalyst's job.
+
+The demo UI's console also lets you fetch an *illustrative* JWT for the
+same `catalyst-proxy` client identity, purely for display (decoded
+header/claims, raw `Authorization: Bearer …` line) — see the JWT preview
+panel that appears once step-up is enabled. This is a separate
+`client_credentials` call the UI backend makes directly against Keycloak
+(`POST /api/jwt-preview`) — it is not, and cannot be, the literal token
+Catalyst attaches on the wire to any given call; Catalyst's own token
+exchange happens entirely inside Catalyst, invisible to any caller.
+
+### Why the JWT check lives in application code, not a Dapr Component
+
+Earlier iterations of this demo used a Dapr bearer-middleware Component +
+Configuration (the classic Dapr way to require a JWT on inbound calls).
+That doesn't work here: `mcp-server`'s app-id is auto-provisioned and
+Catalyst-managed by the MCPServer resource, and Catalyst rejects any
+attempt to attach a Configuration to it (`diagrid appid update mcp-server
+--app-config ... ` → *"This App ID is managed and cannot be modified
+directly"*). Confirmed live: with that Component/Configuration applied and
+reporting `status: ready`, calls with no JWT anywhere still returned `200`
+— it enforced nothing. Checking the full `MCPServer` resource schema
+(`diagrid mcpserver schema`) confirms there's no inbound-auth field at all;
+`auth.oauth2` / `auth.spiffe` / `headers` are all outbound (Catalyst→server)
+only. So the check has to live in the app — `servers/mcp_server.py` uses
+the MCP SDK's own `TokenVerifier` protocol (`mcp.server.auth`), which wraps
+the `/mcp` route in `RequireAuthMiddleware` automatically once you pass
+`token_verifier=` + `auth=AuthSettings(...)` to `FastMCP(...)`.
+
+**The demo:** mcp-server always requires a JWT on every call, but nothing
+supplies one until `./oauth2/setup.sh` configures Catalyst's own OAuth2
+auth on the MCPServer resource — every call fails with `401` before that,
+even the ones the MCPServer access policy already allows. Run it and
+Catalyst starts attaching its own JWT automatically; calls succeed from
+then on, gated purely by the ACL matrix. `./oauth2/teardown.sh` removes it,
+putting every call back into deny.
 
 ```bash
-export KEYCLOAK_PUBLIC_URL=https://...-new-url...
+# The demo beat — without this, everything 401s regardless of ACL
+export KEYCLOAK_PUBLIC_URL=https://xxxx.ngrok-free.app  # or k8s ingress FQDN + /keycloak
+export DIAGRID_PROJECT=secure-mcp-demo
 ./oauth2/setup.sh
-```
 
-OIDC debug helpers:
-```bash
-./oauth2/inspect_token.sh           # decode a fresh JWT, compare kid with JWKS
-./oauth2/test_jwt.sh                # single request with JWT, full response
-```
-
-To remove the OIDC layer entirely (revert to Catalyst-ACL-only):
-```bash
+# Revert to deny (everything 401s again)
 ./oauth2/teardown.sh
 ```
+
+`mcp_server.py` also needs `KEYCLOAK_PUBLIC_URL` / `KEYCLOAK_REALM` /
+`KEYCLOAK_AUDIENCE` in its own process environment to build the JWKS URL it
+verifies against — inherited from the shell in local dev (`dev.yaml`),
+wired explicitly as pod env vars in the k8s chart
+(`k8s/helm/secure-mcp/templates/mcp-servers.yaml`).
+
+I validated this whole chain live against the deployed cluster: no
+`Authorization` header → `401`; a garbage token → `401`; a real token
+fetched from the live Keycloak via the `catalyst-proxy` client →
+`200 OK` with a valid MCP session.
+
+### Two gotchas hit while wiring up Catalyst's OAuth2 config (useful if you touch this feature elsewhere)
+
+- The `issuer` field is **not** the OIDC issuer identifier despite the
+  name — Catalyst does not perform discovery against
+  `{issuer}/.well-known/openid-configuration`. It POSTs directly to
+  whatever URL you put in `issuer`, so it must be the literal token
+  endpoint (e.g. `.../protocol/openid-connect/token`), or Catalyst gets a
+  plain `405 Method Not Allowed` from Keycloak's realm root. `oauth2/setup.sh`
+  already bakes in the full token-endpoint path.
+- Keycloak's default `sslRequired: "external"` rejects the token request
+  with `403 invalid_request: "HTTPS required"` once it comes from a
+  genuinely public IP (Catalyst's, not a private/internal one) over plain
+  HTTP. This repo's realm sets `sslRequired: "none"` to match its existing
+  HTTP-only, no-TLS-yet posture (see `k8s/CATALYST.md`'s "Future: real
+  domain + TLS" section) — don't do this on a realm you actually care about
+  protecting.
 
 ---
 
 ## Resetting state
 
 ### Between demo runs
-If you see HTTP 502 on previously-working calls, Catalyst tunnel state is
-stuck:
+
+If you see HTTP 502 on previously-working calls, Catalyst tunnel state is stuck:
 
 ```bash
 # Ctrl+C the diagrid dev run -f dev.yaml in Terminal 1, then:
-./reset.sh
+./scripts/reset.sh
 diagrid dev run --project secure-mcp-demo -f dev.yaml
 ```
 
-`reset.sh` stops all stale dev sessions + kills orphan server processes
-on ports 8001–8004. App-ids and configurations stay intact.
+`scripts/reset.sh` stops all stale dev sessions + kills any orphan server
+process on port 8001. App-ids and MCPServer resource stay intact.
 
 ### Full teardown
+
 ```bash
 diagrid project delete secure-mcp-demo
 docker-compose down -v

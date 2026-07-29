@@ -3,12 +3,13 @@
   "enabled": true,
   "accessTokenLifespan": 15,
   "ssoSessionIdleTimeout": 1800,
+  "sslRequired": "none",
   "clients": [
     {
-      "clientId": "mcp-agent",
-      "name": "MCP Demo Agent (shared M2M client)",
+      "clientId": "catalyst-proxy",
+      "name": "Catalyst MCP proxy (Catalyst's own service identity)",
       "enabled": true,
-      "secret": "mcp-agent-secret",
+      "secret": "catalyst-proxy-secret",
       "clientAuthenticatorType": "client-secret",
       "serviceAccountsEnabled": true,
       "standardFlowEnabled": false,

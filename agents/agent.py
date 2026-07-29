@@ -1,9 +1,8 @@
 """Parameterized MCP agent.
 
-Reads AGENT_ROLE from env and calls one MCP server (mcp-db-query) through
-Catalyst. The asyncgen exception handler captures HTTP errors that surface
-during MCPStreamableHTTPTool shutdown — same pattern as the existing
-catalyst-mcp-governance demo.
+Reads AGENT_ROLE from env and calls the combined mcp-server through
+Catalyst's MCP proxy endpoint. The asyncgen exception handler captures
+HTTP errors that surface during MCPStreamableHTTPTool shutdown.
 """
 
 import asyncio
@@ -18,7 +17,7 @@ AGENT_ROLE = os.environ.get("AGENT_ROLE", "analyst")
 DAPR_HTTP_ENDPOINT = os.environ["DAPR_HTTP_ENDPOINT"]
 DAPR_API_TOKEN = os.environ["DAPR_API_TOKEN"]
 
-DB_QUERY_URL = f"{DAPR_HTTP_ENDPOINT}/v1.0/invoke/mcp-db-query/method/mcp"
+MCP_URL = f"{DAPR_HTTP_ENDPOINT}/v1.0/diagrid/mcp/mcp-server"
 
 _connection_error = None
 
@@ -49,8 +48,8 @@ async def run():
     try:
         http_client = httpx.AsyncClient(headers={"dapr-api-token": DAPR_API_TOKEN})
         async with MCPStreamableHTTPTool(
-            name="mcp-db-query",
-            url=DB_QUERY_URL,
+            name="mcp-server",
+            url=MCP_URL,
             http_client=http_client,
         ) as mcp_tool:
             agent = Agent(

@@ -52,6 +52,27 @@ spec:
               value: {{ .Values.keycloak.externalDatabase.password | quote }}
             - name: KEYCLOAK_DB_NAME
               value: {{ .Values.keycloak.externalDatabase.database | quote }}
+            - name: QUERY_ROLE
+              value: {{ .Values.mcpServer.dbUsers.query | quote }}
+            - name: QUERY_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.mcpServer.dbPasswordSecret }}
+                  key: query
+            - name: WRITE_ROLE
+              value: {{ .Values.mcpServer.dbUsers.write | quote }}
+            - name: WRITE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.mcpServer.dbPasswordSecret }}
+                  key: write
+            - name: DELETE_ROLE
+              value: {{ .Values.mcpServer.dbUsers.delete | quote }}
+            - name: DELETE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.mcpServer.dbPasswordSecret }}
+                  key: delete
           command:
             - /bin/bash
             - -ec
@@ -84,4 +105,51 @@ spec:
 
               bootstrap_db "$APP_DB_USER" "$APP_DB_PASSWORD" "$APP_DB_NAME"
               bootstrap_db "$KEYCLOAK_DB_USER" "$KEYCLOAK_DB_PASSWORD" "$KEYCLOAK_DB_NAME"
+
+              # Per-op MCP roles (defense in depth — see schema.sql). These
+              # also live in schema.sql for local docker-compose, where
+              # POSTGRES_USER defaults to the real "postgres" superuser and
+              # CREATE ROLE succeeds via bitnami/postgres's initdb.d. In this
+              # chart POSTGRES_USER is "mcp_app" (see values.yaml note on
+              # avoiding the "postgres" username) — a non-superuser with
+              # CREATEDB but not CREATEROLE — so schema.sql's CREATE ROLE
+              # statements silently fail there. Create them here instead,
+              # using this Job's real postgres-superuser connection.
+              bootstrap_role() {
+                local role="$1"
+                local password="$2"
+
+                psql -v ON_ERROR_STOP=1 \
+                  -v role="$role" \
+                  -v password="$password" \
+                  -d postgres <<'SQL'
+              SELECT format('CREATE ROLE %I LOGIN PASSWORD %L', :'role', :'password')
+              WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'role') \gexec
+
+              SELECT format('ALTER ROLE %I WITH LOGIN PASSWORD %L', :'role', :'password') \gexec
+              SQL
+              }
+
+              bootstrap_role "$QUERY_ROLE"  "$QUERY_PASSWORD"
+              bootstrap_role "$WRITE_ROLE"  "$WRITE_PASSWORD"
+              bootstrap_role "$DELETE_ROLE" "$DELETE_PASSWORD"
+
+              psql -v ON_ERROR_STOP=1 \
+                -v db_name="$APP_DB_NAME" \
+                -v query_role="$QUERY_ROLE" \
+                -v write_role="$WRITE_ROLE" \
+                -v delete_role="$DELETE_ROLE" \
+                -d "$APP_DB_NAME" <<'SQL'
+              GRANT CONNECT ON DATABASE :"db_name" TO :"query_role", :"write_role", :"delete_role";
+              GRANT USAGE   ON SCHEMA public TO :"query_role", :"write_role", :"delete_role";
+
+              GRANT SELECT ON ALL TABLES IN SCHEMA public TO :"query_role";
+
+              GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA public TO :"write_role";
+              GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA public TO :"write_role";
+
+              GRANT ALL PRIVILEGES ON ALL TABLES    IN SCHEMA public TO :"delete_role";
+              GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO :"delete_role";
+              GRANT CREATE ON SCHEMA public TO :"delete_role";
+              SQL
 {{- end }}

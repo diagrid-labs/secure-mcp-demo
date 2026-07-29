@@ -23,41 +23,25 @@ ingress:
   paths:
     ui:       /         # everything not matched by another rule
     keycloak: /keycloak
-    query:    /mcp/query
-    write:    /mcp/write
-    delete:   /mcp/delete
+    mcp:      /mcp
 
-# ─── MCP servers (3 deployments share one image) ─────────────────────────
+# ─── MCP server (single combined deployment) ──────────────────────────────
 mcpServer:
   image:
     repository: secure-mcp-server   # override per environment
     tag: dev
     pullPolicy: IfNotPresent
 
-  # Per-server overrides. Same image; only command, port, and DB user vary.
-  # No publicDnsLabel — the ingress controller's single FQDN covers them.
-  servers:
-    query:
-      appId: mcp-db-query
-      command: ["python", "db_query.py"]
-      port: 8001
-      dbUser: mcp_db_query
-      dbPasswordSecret: mcp-db-passwords    # see secrets template
-      dbPasswordKey:    query
-    write:
-      appId: mcp-db-write
-      command: ["python", "db_write.py"]
-      port: 8003
-      dbUser: mcp_db_write
-      dbPasswordSecret: mcp-db-passwords
-      dbPasswordKey:    write
-    delete:
-      appId: mcp-db-delete
-      command: ["python", "db_delete.py"]
-      port: 8004
-      dbUser: mcp_db_delete
-      dbPasswordSecret: mcp-db-passwords
-      dbPasswordKey:    delete
+  appId: mcp-server
+  command: ["python", "mcp_server.py"]
+  port: 8001
+
+  # Per-operation DB users — each has only the privileges its tools need.
+  dbPasswordSecret: mcp-db-passwords    # see secrets template
+  dbUsers:
+    query:  mcp_db_query
+    write:  mcp_db_write
+    delete: mcp_db_delete
 
   service:
     type: ClusterIP
@@ -102,13 +86,18 @@ mcpDbPasswords:
   write:  write_pw
   delete: delete_pw
 
-# ─── Keycloak step-up auth (UI backend → Keycloak token endpoint) ────────
-keycloakClient:
+# ─── Catalyst's own OAuth2 client-credentials (Catalyst -> mcp-server) ───
+# Per https://docs.diagrid.io/develop/mcp/mcp-authentication#oauth-20-client-credentials.
+# ui_backend's step-up toggle (POST /api/policy/apply) uses these to
+# configure/remove Catalyst's own OAuth2 auth on the MCPServer resource.
+# Not used by any agent — agents never talk to Keycloak at all.
+catalystProxyClient:
   realm: secure-mcp
-  clientId: mcp-agent
-  secret: mcp-agent-secret           # demo only; materialized into a Secret
+  audience: https://secure-mcp-demo/
+  clientId: catalyst-proxy
+  secret: catalyst-proxy-secret      # demo only; materialized into a Secret
   clientSecretRef:
-    name: keycloak-client-credentials
+    name: catalyst-proxy-credentials
     key: clientSecret
 
 # ─── Shared Postgres credentials (top-level + keycloak's bundled one) ──

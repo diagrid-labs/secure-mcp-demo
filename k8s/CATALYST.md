@@ -3,13 +3,13 @@
 Catalyst Cloud hosts the Dapr runtime centrally. Per
 <https://docs.diagrid.io/develop/connect>, your apps don't run any
 in-cluster sidecar — they expose an HTTP endpoint and Catalyst forwards
-inbound invocations to it. This chart uses the **app endpoint**
-connection model, with all three MCP servers reachable via path-based
-routing on a single nginx-ingress.
+inbound MCP calls to it. This chart uses the **MCPServer resource** model:
+a single `mcp-server` app handles all tools, and Catalyst's MCP proxy
+routes calls after enforcing the per-tool access policy.
 
 ## Trust model
 
-The MCP servers are on `ClusterIP` Services — not directly reachable from
+The MCP server is on a `ClusterIP` Service — not directly reachable from
 outside. The only public surface is the **nginx-ingress controller's
 LoadBalancer**, and that LB is locked to **Catalyst Cloud's project
 Egress Address** via `loadBalancerSourceRanges`. Anyone else hitting the
@@ -18,57 +18,77 @@ ingress controller.
 
 | Layer | What it gates |
 |---|---|
-| Azure network (`loadBalancerSourceRanges` on nginx-ingress LB) | non-Catalyst IPs (and Keycloak's `/keycloak/*` — same allowlist) |
+| Azure network (`loadBalancerSourceRanges` on nginx-ingress LB) | non-Catalyst IPs |
 | Catalyst App Id (token verification at Catalyst's edge) | bearer-token (`dapr-api-token`) presence + validity |
-| Catalyst ACL | role-vs-app-id allow/deny |
-| Catalyst JWT middleware (`mcp-db-delete` only) | Keycloak-issued step-up JWT |
-
-The "MCP servers see nothing un-authorized" demo story still holds because
-network-layer + Catalyst-layer gates all run before any traffic hits the
-upstream pods.
+| MCPServer access policy | per-tool allow/deny per calling app-id |
+| Keycloak JWT verification in `mcp-server` itself (mandatory, always on) | Checked in application code (`servers/mcp_server.py`, via the MCP SDK's `TokenVerifier`) — there's no Dapr sidecar for an MCPServer-resource-managed app-id, so this can't be a platform-level Component/Configuration. Per <https://docs.diagrid.io/develop/mcp/mcp-authentication#oauth-20-client-credentials>, the JWT itself is **Catalyst's own** — fetched via OAuth2 client-credentials configured on the MCPServer resource (`./oauth2/setup.sh`), not presented by the calling agent |
+| Postgres role-scoped DB users | last line of defense — caps what each tool can actually execute |
 
 > **Important caveat:** the Keycloak path `/keycloak/*` is also behind the
 > same allowlist. Catalyst needs to fetch `/keycloak/realms/.../certs`
 > (JWKS), so Catalyst's egress IPs must be allowed. Your operator browser
 > wanting to reach the UI at `/` ALSO has to come from an allowlisted IP.
-> Either add your office/VPN egress to `CATALYST_EGRESS_CIDRS`, or run
-> the operator UI via `kubectl port-forward` instead.
+> Either add your office/VPN egress to `CATALYST_EGRESS_CIDRS`, or access
+> the UI via `kubectl port-forward` instead.
 
 ## Deploy
 
 ```bash
 cd k8s/
 
-# 1. Get the project's Egress Address from the Catalyst Console
-#    (or `diagrid project get $DIAGRID_PROJECT -o json` — field name has
-#    moved across CLI versions; check `--help`).
+# 1. Create the Catalyst project + App IDs + MCPServer resource
+#    (idempotent; safe to re-run)
+cd .. && ./setup.sh && cd k8s
+
+# 2. Get the project's Egress Address from the Catalyst Console
+#    (or `diagrid project get $DIAGRID_PROJECT -o json | jq '.status'`)
 EGRESS="20.x.x.x/32,20.x.x.y/32"
 
-# 2. Install ingress-nginx (one-time; carries the DNS label + allowlist)
+# 3. Install ingress-nginx (one-time; carries the DNS label + allowlist)
 INGRESS_DNS_LABEL=securemcp \
 AZURE_REGION=eastus \
 CATALYST_EGRESS_CIDRS="$EGRESS" \
 make install-ingress
 
-# 3. Install the secure-mcp chart
-REGISTRY=ghcr.io/yourorg \
+# 4. Build + push images to Docker Hub (or your registry)
+REGISTRY=tezizzm IMAGE_TAG=v1 make build-images
+
+# 5. Install the secure-mcp chart
+REGISTRY=tezizzm \
+IMAGE_TAG=v1 \
 DIAGRID_API_KEY=$YOUR_KEY \
 INGRESS_DNS_LABEL=securemcp \
 AZURE_REGION=eastus \
 make install
 
-# 4. Wait for the Azure LB IP to provision (~1-2 min)
-kubectl -n ingress-nginx get svc --watch
+# 6. Wait for Postgres + Keycloak to be ready (~3-5 min)
+kubectl -n secure-mcp get pods --watch
 
-# 5. Confirm Keycloak's OIDC discovery returns the right issuer
+# 7. Apply the MCPServer resource with the production FQDN
+make register-appids
+
+# 8. Confirm Catalyst can reach mcp-server
+diagrid mcpserver get mcp-server --project secure-mcp-demo -o json | jq '.status'
+# status may show "error" here — expected. mcp-server's own JWT verification
+# (servers/mcp_server.py) already requires a JWT on every call, including
+# Catalyst's own connectivity probe, and nothing supplies one until step 11.
+
+# 9. Confirm Keycloak's OIDC discovery returns the right issuer
 curl -s "http://securemcp.eastus.cloudapp.azure.com/keycloak/realms/secure-mcp/.well-known/openid-configuration" | jq .issuer
 # expect: http://securemcp.eastus.cloudapp.azure.com/keycloak/realms/secure-mcp
 
-# 6. Register each MCP server's path with Catalyst as its app-endpoint
-make register-appids
+# 10. Grant tool access (applies canonical demo matrix)
+cd .. && ./scripts/up.sh
 
-# 7. Verify Catalyst can reach the servers
-diagrid appid get mcp-db-query --project secure-mcp-demo -o json | jq '.status'
+# 11. Enable Catalyst's own OAuth2 auth on the MCPServer resource — this is
+#     what actually satisfies mcp-server's JWT requirement from here on (see
+#     "Trust model" above and README.md's "OIDC / bearer middleware"). Must
+#     match the URL the chart already wired into mcp-server's own env vars
+#     (KEYCLOAK_PUBLIC_URL = http://<ingress-fqdn>/keycloak, from ingress.host).
+export KEYCLOAK_PUBLIC_URL="http://securemcp.eastus.cloudapp.azure.com/keycloak"
+cd .. && ./oauth2/setup.sh && cd k8s
+diagrid mcpserver get mcp-server --project secure-mcp-demo -o json | jq '.status'
+# now expect "ready"
 ```
 
 ## URL shape
@@ -77,30 +97,22 @@ diagrid appid get mcp-db-query --project secure-mcp-demo -o json | jq '.status'
 |---------------|--------------------------|----------------|
 | ui-backend    | `/`                      | passthrough |
 | keycloak      | `/keycloak`              | passthrough (Keycloak runs with `KC_HTTP_RELATIVE_PATH=/keycloak`) |
-| mcp-db-query  | `/mcp/query`             | rewrite to `/mcp` upstream |
-| mcp-db-write  | `/mcp/write`             | rewrite to `/mcp` upstream |
-| mcp-db-delete | `/mcp/delete`            | rewrite to `/mcp` upstream |
+| mcp-server    | `/mcp`                   | rewrite to `/mcp` upstream |
 
-So Catalyst's invocation of, say, the query app-id ends up POSTing
-`http://securemcp.eastus.cloudapp.azure.com/mcp/query/mcp` (Catalyst
-appends `/<method>` to the registered app-endpoint), nginx-ingress
-rewrites the path to `/mcp`, and the FastMCP server receives the request
-on the path it expects.
+Callers never hit these paths directly. Catalyst's MCP proxy endpoint
+(`/v1.0/diagrid/mcp/mcp-server` on the Catalyst HTTP endpoint) is the
+only entry point. Catalyst reads the MCPServer resource's
+`spec.endpoint.streamableHTTP.url` and proxies to
+`http://securemcp.eastus.cloudapp.azure.com/mcp`.
 
 ## Looking up the Egress Address
-
-The exact CLI invocation has moved between Diagrid CLI versions. Try:
 
 ```bash
 diagrid project get $DIAGRID_PROJECT -o json | jq '.status'
 ```
 
-If the egress field isn't obvious in the JSON, the Catalyst Console at
-<https://catalyst.r1.diagrid.io/> shows it under the project's
-**Connectivity** or **Security** section. Plug those CIDR(s) into
-`CATALYST_EGRESS_CIDRS` for both `make install-ingress` (where it lands
-as `loadBalancerSourceRanges`) and any external systems that talk to the
-UI backend.
+The Catalyst Console at <https://catalyst.r1.diagrid.io/> also shows it
+under the project's **Connectivity** or **Security** section.
 
 ## Skipping the allowlist for a quick test
 
@@ -112,13 +124,8 @@ install-ingress` with the CIDRs added is a no-downtime upgrade.
 ## Future: real domain + TLS
 
 When a domain is available:
-1. Point a `CNAME` at the Azure auto-FQDN (or update Ingress.host to the
-   real hostname and let your existing DNS handle it).
+1. Point a `CNAME` at the Azure auto-FQDN (or update `Ingress.host`).
 2. Add cert-manager + a ClusterIssuer for Let's Encrypt.
 3. Annotate the Ingress with
    `cert-manager.io/cluster-issuer: letsencrypt-prod` and add a `tls:`
    section under the Ingress spec.
-
-Switching from path-based to hostname-based routing (one hostname per
-service, with hostname-distinguished Ingress rules) is also viable
-once you have wildcard DNS or per-service records.

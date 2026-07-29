@@ -2,22 +2,19 @@
   Two Ingress resources fronting the whole stack via nginx-ingress.
 
   Routing on the one host:
-    /mcp/query    → mcp-db-query    (rewrite to /mcp)
-    /mcp/write    → mcp-db-write    (rewrite to /mcp)
-    /mcp/delete   → mcp-db-delete   (rewrite to /mcp)
-    /keycloak/*   → keycloak        (no rewrite — KC_HTTP_RELATIVE_PATH=/keycloak)
-    /             → ui-backend      (catch-all)
+    /mcp/*     → mcp-server    (rewrite to /mcp)
+    /keycloak/* → keycloak     (no rewrite — KC_HTTP_RELATIVE_PATH=/keycloak)
+    /           → ui-backend   (catch-all)
 
   We need TWO Ingress objects because the `rewrite-target` annotation is
   per-Ingress, and we want different rewriting behavior for the MCP
-  paths (strip the prefix down to /mcp) vs the keycloak + UI paths
-  (preserve the prefix).
+  path (strip to /mcp) vs the keycloak + UI paths (preserve prefix).
 
   The Catalyst egress allowlist applies to the nginx-ingress controller's
   Service in the ingress-nginx namespace — NOT here. See k8s/README.md.
 */ -}}
 {{- if .Values.ingress.enabled }}
-# ─── MCP routes — strip /mcp/<op> down to /mcp upstream ──────────────────
+# ─── MCP route — strip /mcp down to /mcp upstream ────────────────────────
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
@@ -34,27 +31,13 @@ spec:
     - host: {{ .Values.ingress.host | quote }}
       http:
         paths:
-          - path: {{ .Values.ingress.paths.query | quote }}
+          - path: {{ .Values.ingress.paths.mcp | quote }}
             pathType: Prefix
             backend:
               service:
-                name: {{ (index .Values.mcpServer.servers "query").appId }}
+                name: {{ .Values.mcpServer.appId }}
                 port:
-                  number: {{ (index .Values.mcpServer.servers "query").port }}
-          - path: {{ .Values.ingress.paths.write | quote }}
-            pathType: Prefix
-            backend:
-              service:
-                name: {{ (index .Values.mcpServer.servers "write").appId }}
-                port:
-                  number: {{ (index .Values.mcpServer.servers "write").port }}
-          - path: {{ .Values.ingress.paths.delete | quote }}
-            pathType: Prefix
-            backend:
-              service:
-                name: {{ (index .Values.mcpServer.servers "delete").appId }}
-                port:
-                  number: {{ (index .Values.mcpServer.servers "delete").port }}
+                  number: {{ .Values.mcpServer.port }}
 ---
 # ─── Keycloak + UI backend — no path rewrite ─────────────────────────────
 apiVersion: networking.k8s.io/v1

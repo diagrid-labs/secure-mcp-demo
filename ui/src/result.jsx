@@ -10,8 +10,7 @@ function ResultPanel() {
     <section className="card" data-screen-label="Result">
       <div className="card-h">
         <div>
-          <div className="eyebrow">02 · DB state</div>
-          <h2>Employees · Postgres</h2>
+          <h2>PostgreSQL State</h2>
         </div>
         <div className="sub">
           {s.employees.length} {s.employees.length === 1 ? "row" : "rows"}

@@ -473,6 +473,33 @@ body {
 }
 .jwt-switch.on .switch { background: var(--gold-400); }
 .jwt-switch.on .switch::after { left: 21px; }
+.jwt-switch.busy { opacity: 0.6; pointer-events: none; }
+
+/* JWT status panel — replaces .jwt-switch's slider affordance with a
+   labeled button, so enabling/disabling reads as a deliberate action
+   rather than a one-click flip. */
+.jwt-status-panel {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  background: white;
+}
+.jwt-status-panel.on { border-color: var(--border-strong); background: var(--neutral-50); }
+.jwt-status-panel.busy { opacity: 0.65; pointer-events: none; }
+.jwt-status-panel .lbl { display: flex; flex-direction: column; gap: 2px; }
+.jwt-status-panel .lbl .top {
+  font: 500 13px var(--font-mono);
+  letter-spacing: 0.06em; text-transform: uppercase;
+  white-space: nowrap;
+}
+.jwt-status-panel .lbl .bot {
+  font: 400 11px var(--font-mono);
+  color: var(--neutral-500);
+  white-space: nowrap;
+}
+.jwt-status-panel.on .lbl .top { color: var(--fg); }
 
 /* Op buttons */
 .op-buttons {
@@ -772,7 +799,7 @@ body {
 .gate-row.skipped .icn { background: var(--neutral-300); }
 
 .saw-traffic {
-  display: flex; align-items: flex-start; gap: 14px;
+  display: flex; align-items: center; gap: 14px;
   padding: 16px 18px;
   margin-top: 4px;
   border-radius: 10px;
@@ -1010,6 +1037,38 @@ body {
 .identity-row .kv .v { color: var(--fg); word-break: break-all; }
 .identity-row .kv .v.token { color: var(--teal-800); }
 .identity-row .kv .v.fp { color: var(--neutral-700); }
+
+/* ---------- JWT step-up confirm modal (centered, over .scrim) ---------- */
+.confirm-modal {
+  position: fixed; top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  width: 480px; max-width: 92vw;
+  background: white;
+  border-radius: 14px;
+  box-shadow: 0 24px 64px rgba(0,0,0,0.28);
+  z-index: 71;
+  padding: 24px 26px;
+}
+.confirm-modal h2 {
+  font: 600 19px var(--font-display);
+  letter-spacing: -0.01em;
+  margin-bottom: 12px;
+}
+.confirm-modal-body p {
+  font: 400 14px/1.55 var(--font-display);
+  color: var(--fg);
+  margin-bottom: 10px;
+}
+.confirm-modal-body p.fine { font-size: 12.5px; color: var(--neutral-500); }
+.confirm-modal-body code {
+  font: 500 12.5px var(--font-mono);
+  background: var(--neutral-100);
+  padding: 1px 5px; border-radius: 4px;
+}
+.confirm-modal-actions {
+  display: flex; justify-content: flex-end; gap: 10px;
+  margin-top: 20px;
+}
 
 /* ---------- Rationale strip (designer notes, header) ---------- */
 .rationale {

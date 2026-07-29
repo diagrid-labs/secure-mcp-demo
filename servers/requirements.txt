@@ -1,2 +1,7 @@
-mcp[cli]
+# Pinned — mcp 2.0.0 renamed streamablehttp_client to streamable_http_client
+# on the client side; pinning here too keeps the server's mcp version in
+# lockstep with the client-side pins in ui_backend/ and agents/
+# requirements.txt, since all three need to interoperate.
+mcp[cli]==1.28.1
 psycopg2-binary
+pyjwt[crypto]

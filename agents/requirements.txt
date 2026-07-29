@@ -6,4 +6,8 @@ agent-framework==1.2.2
 agent-framework-core==1.2.2
 agent-framework-openai==1.2.2
 httpx
+# Pinned — mcp 2.0.0 renamed streamablehttp_client to streamable_http_client,
+# a breaking change for this repo's mcp.client.streamable_http imports. See
+# ui_backend/requirements.txt for the full explanation.
+mcp==1.28.1
 openai

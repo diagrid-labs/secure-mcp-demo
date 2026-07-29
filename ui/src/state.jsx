@@ -4,8 +4,10 @@
    Single source of truth: window.__demo.
    - configured matrix (mirror of what Catalyst's control plane enforces;
      read-only here, edited via shell scripts)
-   - jwt middleware on/off (mirror)
-   - selected role + jwt-presented (per-call concept)
+   - jwtMiddlewareCfg: whether Catalyst's own OAuth2 client-credentials are
+     configured on the MCPServer resource (global — not a per-call choice;
+     no agent or UI call ever presents its own JWT). Toggling this in the
+     UI actually calls oauth2/setup.sh's equivalent via /api/policy/apply.
    - employees rows (Postgres state, re-fetched after mutations)
    - last result (the gate trace the Agent Console renders)
 
@@ -21,14 +23,13 @@
 const ROLES = ["analyst", "ops", "admin"];
 const OPS   = ["query", "write", "delete"];
 
-const SERVER_OF = {
-  query:  "mcp-db-query",
-  write:  "mcp-db-write",
-  delete: "mcp-db-delete",
-};
+// Single combined MCP server — every op goes through the same app and the
+// same Catalyst MCP proxy path.
+const MCP_SERVER = "mcp-server";
+const MCP_PATH   = "/v1.0/diagrid/mcp/mcp-server";
 
 const VERB_OF = {
-  query:  { name: "list_employees",  args: "limit=100" },
+  query:  { name: "query",           args: "sql='SELECT * FROM employees ORDER BY id'" },
   write:  { name: "insert_employee", args: 'name="Demo Target", email="demo@diagrid.example"' },
   delete: { name: "delete_employee", args: 'where name="Demo Target"' },
 };
@@ -75,9 +76,24 @@ const cloneMatrix = (m) => ROLES.reduce((acc, r) => {
 const initialState = {
   configured:       cloneMatrix(DEFAULT_MATRIX),
   jwtMiddlewareCfg: false,
+  busyPolicy:       false,
+
+  // Confirmation modal for the JWT step-up toggle — a click never applies
+  // anything directly; only confirmJwtToggle() (fired by the modal's
+  // Confirm button) does.
+  jwtConfirmOpen:   false,
+  jwtConfirmTarget: null,   // bool | null — captured at modal-open time
+
+  // Illustrative client-side JWT preview (independent client_credentials
+  // fetch against Keycloak's catalyst-proxy client — see README.md's
+  // "OIDC / bearer middleware"). NOT the token Catalyst actually attaches
+  // to any /api/invoke call; shown purely to demonstrate what one looks
+  // like once step-up is enabled.
+  jwtPreview:      null,    // null | { token, header, claims, fetchedAt, expiresInSeconds }
+  jwtPreviewError: null,
+  busyJwtPreview:  false,
 
   selectedRole: "ops",
-  jwtPresented: false,
 
   employees: [...SEED_EMPLOYEES],
   nextEmpId: 200,
@@ -116,6 +132,12 @@ async function _bootstrap() {
           configured:       cloneMatrix(data.matrix),
           jwtMiddlewareCfg: !!data.jwtMiddleware,
         });
+        // If JWT is already configured (e.g. after a page reload), fetch a
+        // preview immediately so the gate trace's JWT middleware row has a
+        // real token to show right away — not just right after toggling.
+        if (data.jwtMiddleware) {
+          actions.fetchJwtPreview();
+        }
       }
     }
   } catch (_) {}
@@ -147,8 +169,87 @@ const actions = {
     store.set({ selectedRole: role });
   },
 
-  toggleJwtPresented() {
-    store.set((s) => ({ ...s, jwtPresented: !s.jwtPresented }));
+  // Opens the confirm modal instead of flipping state directly. The
+  // target (enable vs. disable) is captured now, at open time, so a
+  // stray external change (e.g. someone running oauth2/setup.sh in
+  // another terminal) while the modal sits open can't silently change
+  // what "confirm" ends up applying.
+  openJwtConfirm() {
+    const s = store.get();
+    if (s.busyPolicy || s.busyJwtPreview) return;
+    store.set({ jwtConfirmOpen: true, jwtConfirmTarget: !s.jwtMiddlewareCfg });
+  },
+
+  // Escape / click-outside / Cancel all call this. Never applies anything.
+  closeJwtConfirm() {
+    store.set({ jwtConfirmOpen: false, jwtConfirmTarget: null });
+  },
+
+  // The ONLY path that actually calls /api/policy/apply for the JWT flag.
+  // Configures (or removes) Catalyst's own OAuth2 client-credentials auth
+  // on the MCPServer resource — a GLOBAL setting, not per-call. No agent
+  // or UI call ever presents its own JWT to mcp-server; this is the only
+  // thing that controls whether one reaches it at all.
+  async confirmJwtToggle() {
+    const s = store.get();
+    if (s.busyPolicy || s.jwtConfirmTarget === null) return;
+    const target = s.jwtConfirmTarget;
+
+    store.set({ busyPolicy: true, jwtConfirmOpen: false, jwtConfirmTarget: null });
+
+    try {
+      await fetch("/api/policy/apply", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ matrix: s.configured, jwtMiddleware: target }),
+      });
+    } catch (_) {
+      // Backend unreachable — fall through to the optimistic flip below.
+    }
+
+    let newCfg = target;
+    try {
+      const r = await fetch("/api/policy/configured");
+      if (r.ok) {
+        const data = await r.json();
+        newCfg = !!data.jwtMiddleware;
+      }
+    } catch (_) {}
+
+    store.set({ jwtMiddlewareCfg: newCfg, busyPolicy: false });
+
+    if (newCfg) {
+      // Enabling — fetch an illustrative token so the gate trace's JWT
+      // middleware row has something real (truncated) to show on the
+      // next successful call.
+      actions.fetchJwtPreview();
+    } else {
+      // Disabling — clear any stale preview so the UI never shows a
+      // valid-looking token while the server-side gate is off.
+      store.set({ jwtPreview: null, jwtPreviewError: null });
+    }
+  },
+
+  // Independent client-side JWT fetch — a client_credentials grant
+  // against Keycloak's catalyst-proxy client, purely to have a real
+  // (truncated-for-display) token available for the gate trace's JWT
+  // middleware row. Does not touch jwtMiddlewareCfg/busyPolicy at all.
+  async fetchJwtPreview() {
+    const s = store.get();
+    if (s.busyJwtPreview) return;
+    store.set({ busyJwtPreview: true, jwtPreviewError: null });
+
+    try {
+      const r = await fetch("/api/jwt-preview", { method: "POST" });
+      if (!r.ok) {
+        const data = await r.json().catch(() => ({}));
+        throw new Error(data.detail || `HTTP ${r.status}`);
+      }
+      const data = await r.json();
+      store.set({ jwtPreview: data, busyJwtPreview: false });
+    } catch (err) {
+      store.set({ jwtPreviewError: String(err.message || err), busyJwtPreview: false });
+    }
   },
 
   fireCall(op) {
@@ -157,7 +258,6 @@ const actions = {
     store.set({ busyOp: op });
 
     const role = s.selectedRole;
-    const jwt  = s.jwtPresented;
 
     (async () => {
       let result;
@@ -165,7 +265,7 @@ const actions = {
         const r = await fetch("/api/invoke", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ role, op, jwtPresented: jwt, source: "ui" }),
+          body: JSON.stringify({ role, op, source: "ui" }),
         });
         if (!r.ok) throw new Error(`invoke HTTP ${r.status}`);
         result = await r.json();
@@ -174,7 +274,7 @@ const actions = {
         // prototype still tells some story standalone.
         console.warn("invoke fetch failed, falling back to local resolver:", err);
         result = resolveCall({
-          role, op, jwt,
+          role, op,
           configured: s.configured,
           jwtMiddleware: s.jwtMiddlewareCfg,
         });
@@ -219,35 +319,40 @@ const actions = {
 // Used only when the backend isn't reachable. Keeps the prototype
 // renderable standalone (e.g. opened from a file:// URL). Real demos run
 // against the backend and never hit this path.
-function resolveCall({ role, op, jwt, configured, jwtMiddleware }) {
-  const server = SERVER_OF[op];
-  const verb   = VERB_OF[op];
-  const t      = NOW_HHMMSS();
+//
+// Gate order matches the real architecture: Catalyst's MCPServer access
+// policy is checked first, at Catalyst's edge — an ACL deny never reaches
+// mcp-server at all. mcp-server's own JWT verification (Catalyst's own
+// OAuth2 auth, see README.md's "OIDC / bearer middleware") is the second,
+// independent gate, checked on every op alike — not just delete.
+function resolveCall({ role, op, configured, jwtMiddleware }) {
+  const verb = VERB_OF[op];
+  const t    = NOW_HHMMSS();
 
   if (!configured[role][op]) {
     return makeResult({
       kind: "acl-deny",
       status: 403,
-      role, op, server, jwt, source: "ui", t, verb,
+      role, op, server: MCP_SERVER, jwt: jwtMiddleware, source: "ui", t, verb,
       sawTraffic: false,
-      reason: `'${role}' has no allow rule for ${server}`,
+      reason: `'${role}' has no allow rule for tool '${verb.name}'`,
     });
   }
 
-  if (op === "delete" && jwtMiddleware && !jwt) {
+  if (!jwtMiddleware) {
     return makeResult({
       kind: "jwt-deny",
       status: 401,
-      role, op, server, jwt, source: "ui", t, verb,
+      role, op, server: MCP_SERVER, jwt: false, source: "ui", t, verb,
       sawTraffic: false,
-      reason: "no JWT presented (mcp-db-delete requires step-up)",
+      reason: "Catalyst's own OAuth2 auth isn't configured on the MCPServer resource yet",
     });
   }
 
   return makeResult({
     kind: "ok",
     status: 200,
-    role, op, server, jwt, source: "ui", t, verb,
+    role, op, server: MCP_SERVER, jwt: true, source: "ui", t, verb,
     sawTraffic: true,
     reason: null,
   });
@@ -257,7 +362,7 @@ function makeResult(o) {
   return {
     ...o,
     durationMs: o.kind === "ok" ? randMs(110, 240) : randMs(35, 90),
-    path: `/v1.0/invoke/${o.server}/method/mcp`,
+    path: MCP_PATH,
     method: "POST",
     headersSent: {},      // backend-driven; empty in the fallback path
   };
@@ -271,4 +376,4 @@ function useDemo() {
   return [s, actions];
 }
 
-window.__demo = { store, actions, useDemo, ROLES, OPS, SERVER_OF, VERB_OF };
+window.__demo = { store, actions, useDemo, ROLES, OPS, MCP_SERVER, MCP_PATH, VERB_OF };

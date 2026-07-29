@@ -1,30 +1,26 @@
 version: 1
 
-# Long-running per-op MCP servers. Agents are launched ad-hoc by run_demo.sh
-# (via separate `diagrid dev run --app-id <agent>` invocations) so we can
-# fire each role in sequence and produce the matrix.
+# Single combined MCP server. Agents are launched ad-hoc by run_demo.sh
+# (via separate `diagrid dev run --app-id <agent>` invocations). The
+# MCPServer resource in ./resources/mcp-server.yaml registers this app
+# with Catalyst so callers reach it via /v1.0/diagrid/mcp/mcp-server.
+
+common:
+  resourcesPath: ./resources
 
 apps:
-  - appID: mcp-db-query
+  - appID: mcp-server
     appDirPath: .
     appPort: 8001
-    command: ["uv", "run", "python", "servers/db_query.py"]
+    command: ["uv", "run", "python", "servers/mcp_server.py"]
+    # servers/mcp_server.py also reads KEYCLOAK_PUBLIC_URL / KEYCLOAK_REALM /
+    # KEYCLOAK_AUDIENCE to verify the bearer JWT on every call — not listed
+    # here since they're inherited from the shell this is launched from
+    # (DEMO.md's pre-demo steps export them before `diagrid dev run`).
     env:
-      DB_USER: mcp_db_query
-      DB_PASSWORD: query_pw
-
-  - appID: mcp-db-write
-    appDirPath: .
-    appPort: 8003
-    command: ["uv", "run", "python", "servers/db_write.py"]
-    env:
-      DB_USER: mcp_db_write
-      DB_PASSWORD: write_pw
-
-  - appID: mcp-db-delete
-    appDirPath: .
-    appPort: 8004
-    command: ["uv", "run", "python", "servers/db_delete.py"]
-    env:
-      DB_USER: mcp_db_delete
-      DB_PASSWORD: delete_pw
+      DB_USER_QUERY: mcp_db_query
+      DB_PASSWORD_QUERY: query_pw
+      DB_USER_WRITE: mcp_db_write
+      DB_PASSWORD_WRITE: write_pw
+      DB_USER_DELETE: mcp_db_delete
+      DB_PASSWORD_DELETE: delete_pw
