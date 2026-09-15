@@ -3,8 +3,6 @@ uvicorn[standard]
 httpx
 psycopg2-binary
 # Pinned — mcp 2.0.0 renamed streamablehttp_client to streamable_http_client,
-# a breaking change for every mcp.client.streamable_http import in this repo
-# (ui_backend/main.py, agents/probe.py, oauth2/admin_workflow.py). 1.28.1 is
-# the last version tested against servers/mcp_server.py's TokenVerifier/
-# AuthSettings JWT verification (see README.md's "OIDC / bearer middleware").
+# breaking every mcp.client.streamable_http import in this repo. Keep in
+# lockstep with servers/ and agents/ requirements.txt.
 mcp==1.28.1

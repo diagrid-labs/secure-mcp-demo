@@ -1,33 +1,23 @@
 #!/usr/bin/env bash
-# Enables Catalyst-NATIVE OAuth 2.0 client-credentials auth on the MCPServer
-# resource itself, per:
-#   https://docs.diagrid.io/develop/mcp/mcp-authentication#oauth-20-client-credentials
+# THE demo's step-up mechanic. postgresql-mcp always requires a Keycloak
+# JWT, but nothing supplies one until this configures Catalyst's own
+# OAuth2 client-credentials (client "catalyst-proxy") on the MCPServer
+# resource, so Catalyst fetches + attaches its own JWT on every call it
+# forwards. Per https://docs.diagrid.io/develop/mcp/mcp-authentication#oauth-20-client-credentials.
 #
-# This is THE demo's step-up mechanic. `./setup.sh` (repo root) already made
-# every call to mcp-server require a valid Keycloak-issued JWT — see the
-# bearer middleware it applies. Before this script runs, nothing can attach
-# that JWT, so every call fails (401), regardless of the MCPServer access
-# policy. Running this script configures Catalyst itself to fetch and
-# attach its own JWT (via client_credentials, using its own dedicated
-# Keycloak client "catalyst-proxy" — distinct from any agent identity) on
-# every call it forwards. Only after this runs do calls succeed (still
-# gated by the per-tool MCPServer access policy on top).
+# Prereqs: ./scripts/setup.sh has run; Keycloak reachable at
+# KEYCLOAK_PUBLIC_URL with the "catalyst-proxy" client imported
+# (see keycloak/realm-export.json).
 #
-# Prereqs:
-#   - Catalyst project + MCPServer resource + bearer middleware exist (./setup.sh)
-#   - Keycloak running and reachable at KEYCLOAK_PUBLIC_URL, with the
-#     "catalyst-proxy" client imported (see keycloak/realm-export.json)
-#
-# Environment:
-#   KEYCLOAK_PUBLIC_URL          — URL Catalyst's control plane can reach
-#                                  Keycloak at. Defaults to http://localhost:8080
-#                                  (only works if Catalyst runs locally; most
-#                                  setups need a public URL, e.g. an ngrok
-#                                  tunnel for local dev, or the ingress FQDN
-#                                  + /keycloak for the k8s deployment).
-#   KEYCLOAK_REALM                — defaults to "secure-mcp"
-#   KEYCLOAK_AUDIENCE             — defaults to "https://secure-mcp-demo/"
-#   CATALYST_PROXY_CLIENT_SECRET  — defaults to "catalyst-proxy-secret"
+# Env vars (all optional):
+#   KEYCLOAK_PUBLIC_URL — URL Catalyst's control plane can reach Keycloak
+#                         at (default http://localhost:8080, only works if
+#                         Catalyst runs locally — most setups need a public
+#                         URL: an ngrok tunnel, or the k8s ingress FQDN +
+#                         /keycloak)
+#   KEYCLOAK_REALM                — default "secure-mcp"
+#   KEYCLOAK_AUDIENCE             — default "https://secure-mcp-demo/"
+#   CATALYST_PROXY_CLIENT_SECRET  — default "catalyst-proxy-secret"
 #                                   (matches keycloak/realm-export.json)
 
 set -euo pipefail
@@ -43,7 +33,7 @@ export CATALYST_PROXY_CLIENT_SECRET="${CATALYST_PROXY_CLIENT_SECRET:-catalyst-pr
 
 echo "============================================"
 echo " Catalyst-native OAuth2 client-credentials auth"
-echo " (Catalyst -> mcp-server)"
+echo " (Catalyst -> postgresql-mcp)"
 echo "============================================"
 echo " KEYCLOAK_PUBLIC_URL : $KEYCLOAK_PUBLIC_URL"
 echo " KEYCLOAK_REALM      : $KEYCLOAK_REALM"
@@ -60,7 +50,7 @@ if [[ "$KEYCLOAK_PUBLIC_URL" == *"localhost"* ]]; then
     echo "     FQDN + /keycloak)."
 fi
 
-CURRENT_URL=$(diagrid mcpserver get mcp-server --project "$PROJECT" -o json | \
+CURRENT_URL=$(diagrid mcpserver get postgresql-mcp --project "$PROJECT" -o json | \
     uv run python -c "import json,sys; print(json.load(sys.stdin)['spec']['endpoint']['streamableHTTP']['url'])")
 echo ""
 echo ">>> Current endpoint URL (preserved): $CURRENT_URL"
@@ -71,7 +61,7 @@ cat > "$TMP" <<EOF
 apiVersion: dapr.io/v1alpha1
 kind: MCPServer
 metadata:
-  name: mcp-server
+  name: postgresql-mcp
 spec:
   endpoint:
     streamableHTTP:
@@ -92,11 +82,11 @@ diagrid apply --project "$PROJECT" -f "$TMP"
 echo ""
 echo "============================================"
 echo " Catalyst will now fetch + attach its own OAuth2 token on every"
-echo " call it forwards to mcp-server. Calls now succeed, gated only by"
-echo " the MCPServer access policy (./scripts/up.sh / grant.sh)."
+echo " call it forwards to postgresql-mcp. Calls now succeed, gated only by"
+echo " the MCPServer access policy (diagrid mcpserver access grant ...)."
 echo ""
 echo " Verify:"
-echo "   diagrid mcpserver get mcp-server --project $PROJECT -o json | jq '.spec.endpoint.streamableHTTP.auth'"
+echo "   diagrid mcpserver get postgresql-mcp --project $PROJECT -o json | jq '.spec.endpoint.streamableHTTP.auth'"
 echo ""
 echo " To revert: ./oauth2/teardown.sh"
 echo "============================================"

@@ -1,7 +1,7 @@
 apiVersion: dapr.io/v1alpha1
 kind: MCPServer
 metadata:
-  name: mcp-server
+  name: postgresql-mcp
 spec:
   endpoint:
     streamableHTTP:

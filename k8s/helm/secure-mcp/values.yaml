@@ -28,12 +28,12 @@ ingress:
 # ─── MCP server (single combined deployment) ──────────────────────────────
 mcpServer:
   image:
-    repository: secure-mcp-server   # override per environment
+    repository: secure-postgresql-mcp   # override per environment
     tag: dev
     pullPolicy: IfNotPresent
 
-  appId: mcp-server
-  command: ["python", "mcp_server.py"]
+  appId: postgresql-mcp
+  command: ["python", "postgresql_mcp.py"]
   port: 8001
 
   # Per-operation DB users — each has only the privileges its tools need.
@@ -86,7 +86,7 @@ mcpDbPasswords:
   write:  write_pw
   delete: delete_pw
 
-# ─── Catalyst's own OAuth2 client-credentials (Catalyst -> mcp-server) ───
+# ─── Catalyst's own OAuth2 client-credentials (Catalyst -> postgresql-mcp) ───
 # Per https://docs.diagrid.io/develop/mcp/mcp-authentication#oauth-20-client-credentials.
 # ui_backend's step-up toggle (POST /api/policy/apply) uses these to
 # configure/remove Catalyst's own OAuth2 auth on the MCPServer resource.

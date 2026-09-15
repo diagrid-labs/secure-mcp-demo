@@ -196,7 +196,7 @@ function GateTrace({ result, jwtToken }) {
   if (r.kind === "ok") {
     edge = { state: "passed", detail: "bearer token resolved to app-id" };
     acl  = { state: "passed", detail: `'${r.role}' allowed on ${r.server}` };
-    // Required on every op, always — mcp-server verifies a JWT on every
+    // Required on every op, always — postgresql-mcp verifies a JWT on every
     // call, no exceptions for query/write. A successful call only ever
     // happens because Catalyst's own token satisfied it.
     jwt = { state: "passed", detail: "JWT verified — Catalyst's own token (iss, aud, sig)" };
@@ -331,11 +331,9 @@ function JwtConfirmModal({ s, a }) {
           {enabling ? (
             <>
               <p>
-                This configures Catalyst's own OAuth2 client-credentials on the{" "}
-                <code>mcp-server</code> MCPServer resource. From then on,{" "}
-                <b>every mcp-server call will require a valid Keycloak JWT</b> —
-                Catalyst fetches and attaches its own token automatically, on
-                every call, for every role.
+                This adds OAuth2 on the Catalyst <code>postgresql-mcp</code> proxy,
+                enforced by the MCP server itself — every call now needs a
+                valid Keycloak JWT, which Catalyst attaches automatically.
               </p>
               <p className="fine">
                 This will also fetch a real, illustrative JWT from Keycloak using
@@ -347,10 +345,9 @@ function JwtConfirmModal({ s, a }) {
             </>
           ) : (
             <p>
-              This removes Catalyst's OAuth2 auth from the <code>mcp-server</code>{" "}
-              MCPServer resource. From then on, <b>every call will start failing
-              with 401</b>, regardless of what the ACL matrix allows — nothing
-              will be supplying a JWT anymore.
+              This removes that OAuth2 enforcement from the{" "}
+              <code>postgresql-mcp</code> proxy. Until it's turned back on, every
+              call will fail with 401 — nothing will be supplying a JWT anymore.
             </p>
           )}
         </div>

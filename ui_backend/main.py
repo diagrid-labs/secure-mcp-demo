@@ -38,14 +38,14 @@ STATIC_DIR = REPO_ROOT / "ui"
 
 PROJECT = os.environ.get("DIAGRID_PROJECT", "secure-mcp-demo")
 
-AGENTS = ["analyst-agent", "ops-agent", "admin-agent"]
-SERVERS = ["mcp-server"]
+AGENTS = ["analyst-mcp-client", "ops-mcp-client", "admin-mcp-client"]
+SERVERS = ["postgresql-mcp"]
 
 # All operations are served by the single combined MCP server.
 OP_TO_SERVER = {
-    "query":  "mcp-server",
-    "write":  "mcp-server",
-    "delete": "mcp-server",
+    "query":  "postgresql-mcp",
+    "write":  "postgresql-mcp",
+    "delete": "postgresql-mcp",
 }
 
 # Tools that belong to each logical operation — used for grant/revoke.
@@ -181,7 +181,7 @@ def _b64url_decode(segment: str) -> bytes:
 def _decode_jwt_for_display(token: str) -> tuple[dict, dict]:
     """Split a compact JWT into (header, claims) dicts for display only —
     no signature verification. Real verification happens server-side in
-    servers/mcp_server.py's KeycloakTokenVerifier against Keycloak's JWKS.
+    servers/postgresql_mcp.py's KeycloakTokenVerifier against Keycloak's JWKS.
     """
     parts = token.split(".")
     if len(parts) != 3:
@@ -197,7 +197,7 @@ def _agent_token(role: str) -> str:
     if token:
         return token
 
-    appid_data = _diagrid_json("appid", "get", f"{role}-agent")
+    appid_data = _diagrid_json("appid", "get", f"{role}-mcp-client")
     return (appid_data.get("status") or {}).get("apiToken") or ""
 
 
@@ -301,7 +301,7 @@ def policy_configured() -> dict:
     # Read the MCPServer access policy.
     # spec.rules[].callers[].appID and spec.rules[].grants[].names (capability=tools)
     try:
-        data = _diagrid_json("mcpserver", "access", "get", "mcp-server")
+        data = _diagrid_json("mcpserver", "access", "get", "postgresql-mcp")
         rules = (data.get("spec", {}) or {}).get("rules", []) or []
         for rule in rules:
             callers = [c.get("appID") for c in (rule.get("callers") or [])]
@@ -313,14 +313,14 @@ def policy_configured() -> dict:
                     allowed_tools.update(names)
             for caller in callers:
                 for role in ("analyst", "ops", "admin"):
-                    if caller in (f"{role}-agent", "*"):
+                    if caller in (f"{role}-mcp-client", "*"):
                         for op, tools in OP_TO_TOOLS.items():
                             if "*" in allowed_tools or allowed_tools & set(tools):
                                 matrix[role][op] = True
     except HTTPException:
         pass  # Policy not yet set up — all-deny is correct default.
 
-    # JWT middleware: mcp-server always requires a bearer JWT (Dapr bearer
+    # JWT middleware: postgresql-mcp always requires a bearer JWT (Dapr bearer
     # middleware applied once by ../setup.sh — not toggled). What's actually
     # toggled here is whether Catalyst itself is configured to fetch and
     # attach its own JWT: spec.endpoint.streamableHTTP.auth.oauth2 on the
@@ -330,7 +330,7 @@ def policy_configured() -> dict:
     jwt_status = "absent"
     jwt_error = None
     try:
-        data = _diagrid_json("mcpserver", "get", "mcp-server")
+        data = _diagrid_json("mcpserver", "get", "postgresql-mcp")
         auth = (
             (data.get("spec", {}) or {})
             .get("endpoint", {})
@@ -399,8 +399,8 @@ def policy_apply(payload: dict = Body(...)) -> dict:
                 tools = ",".join(OP_TO_TOOLS[op])
                 cmd_verb = "grant" if target else "revoke"
                 cmd = [
-                    "diagrid", "mcpserver", "access", cmd_verb, "mcp-server",
-                    "--caller", f"{role}-agent",
+                    "diagrid", "mcpserver", "access", cmd_verb, "postgresql-mcp",
+                    "--caller", f"{role}-mcp-client",
                     "--allow-tools", tools,
                     "--project", PROJECT,
                 ]
@@ -420,12 +420,12 @@ def policy_apply(payload: dict = Body(...)) -> dict:
 
 def _apply_jwt_middleware(jwt_on: bool) -> None:
     """Add or remove Catalyst's own OAuth2 client-credentials auth on the
-    MCPServer resource (see ../oauth2/setup.sh / teardown.sh). mcp-server's
+    MCPServer resource (see ../oauth2/setup.sh / teardown.sh). postgresql-mcp's
     bearer middleware always requires a JWT (baseline, set once by
     ../setup.sh) — this is what actually supplies one. Preserves the
     resource's current endpoint URL.
     """
-    data = _diagrid_json("mcpserver", "get", "mcp-server")
+    data = _diagrid_json("mcpserver", "get", "postgresql-mcp")
     current_url = (
         (data.get("spec", {}) or {})
         .get("endpoint", {})
@@ -433,13 +433,13 @@ def _apply_jwt_middleware(jwt_on: bool) -> None:
         .get("url", "")
     )
     if not current_url:
-        raise HTTPException(status_code=502, detail="could not read mcp-server's current endpoint URL")
+        raise HTTPException(status_code=502, detail="could not read postgresql-mcp's current endpoint URL")
 
     yaml_doc = (
         "apiVersion: dapr.io/v1alpha1\n"
         "kind: MCPServer\n"
         "metadata:\n"
-        "  name: mcp-server\n"
+        "  name: postgresql-mcp\n"
         "spec:\n"
         "  endpoint:\n"
         "    streamableHTTP:\n"
@@ -565,7 +565,7 @@ def _extract_status(exc: BaseException, _seen: set | None = None) -> int | None:
     code = getattr(resp, "status_code", None)
     if code:
         return code
-    # Catalyst proxies an mcp-server-side HTTP error (e.g. our own bearer
+    # Catalyst proxies a postgresql-mcp-side HTTP error (e.g. our own bearer
     # JWT rejection) as an MCP-protocol-level error, not a raw HTTP
     # response — surfaces as McpError("upstream HTTP 401: ...").
     match = re.search(r"HTTP (\d{3})", str(exc))
@@ -642,8 +642,8 @@ async def invoke(payload: dict = Body(...)) -> dict:
 
     verb = VERB_OF[op]
 
-    # mcp-server always requires a bearer JWT, verified in its own
-    # application code (servers/mcp_server.py). It's Catalyst's own job to
+    # postgresql-mcp always requires a bearer JWT, verified in its own
+    # application code (servers/postgresql_mcp.py). It's Catalyst's own job to
     # attach one, via OAuth2 client-credentials configured on the MCPServer
     # resource (../oauth2/setup.sh) — this backend, like any caller, never
     # fetches or presents a JWT itself. Report the current global state for
@@ -656,7 +656,7 @@ async def invoke(payload: dict = Body(...)) -> dict:
 
     headers = {"dapr-api-token": catalyst_token}
 
-    url = f"{endpoint}/v1.0/diagrid/mcp/mcp-server"
+    url = f"{endpoint}/v1.0/diagrid/mcp/postgresql-mcp"
 
     t_iso = time.strftime("%H:%M:%S")
     t_start = time.time()
@@ -674,7 +674,7 @@ async def invoke(payload: dict = Body(...)) -> dict:
                 result = await session.call_tool(tool, args)
                 body = " ".join(getattr(b, "text", "") for b in (result.content or []))
         await asyncio.sleep(0.05)
-        hb = _recent_heartbeat("mcp-server", tool)
+        hb = _recent_heartbeat("postgresql-mcp", tool)
         if hb:
             verb = {
                 "name": tool,
@@ -689,7 +689,7 @@ async def invoke(payload: dict = Body(...)) -> dict:
             reason = "Catalyst's own OAuth2 auth isn't configured on the MCPServer resource yet"
         elif status == 403:
             kind = "acl-deny"
-            reason = f"Catalyst ACL denied {role}-agent tool: {tool}"
+            reason = f"Catalyst ACL denied {role}-mcp-client tool: {tool}"
         else:
             kind = "acl-deny"
             reason = f"unexpected status {status}"
@@ -699,7 +699,7 @@ async def invoke(payload: dict = Body(...)) -> dict:
         "status": status,
         "role": role,
         "op": op,
-        "server": "mcp-server",
+        "server": "postgresql-mcp",
         "jwt": jwt_configured,
         "source": source,
         "t": t_iso,
@@ -709,7 +709,7 @@ async def invoke(payload: dict = Body(...)) -> dict:
         "durationMs": int((time.time() - t_start) * 1000),
         "body": body,
         "headersSent": _headers_sent(catalyst_token, None),
-        "path": "/v1.0/diagrid/mcp/mcp-server",
+        "path": "/v1.0/diagrid/mcp/postgresql-mcp",
         "method": "POST",
     }
 
@@ -755,7 +755,7 @@ async def spoof(payload: dict = Body(...)) -> dict:
         proj = _diagrid_project_get()
         endpoint = (((proj.get("status") or {}).get("endpoints") or {}).get("http") or {}).get("url") or ""
 
-    url = f"{endpoint}/v1.0/diagrid/mcp/mcp-server"
+    url = f"{endpoint}/v1.0/diagrid/mcp/postgresql-mcp"
 
     headers: dict[str, str] = {
         "Content-Type": "application/json",
@@ -777,7 +777,7 @@ async def spoof(payload: dict = Body(...)) -> dict:
         role = "analyst"
         op = "delete"
         verb_label = "delete_employee"
-        reason_template = "Catalyst ACL denied analyst-agent tool: delete_employee"
+        reason_template = "Catalyst ACL denied analyst-mcp-client tool: delete_employee"
         mcp_headers = {"dapr-api-token": analyst_token}
 
         status = 200
@@ -799,7 +799,7 @@ async def spoof(payload: dict = Body(...)) -> dict:
             "status": status,
             "role": role,
             "op": op,
-            "server": "mcp-server",
+            "server": "postgresql-mcp",
             "jwt": False,
             "source": "external",
             "t": t_iso,
@@ -809,13 +809,13 @@ async def spoof(payload: dict = Body(...)) -> dict:
             "durationMs": int((time.time() - t_start) * 1000),
             "attackKind": kind,
             "headersSent": _headers_sent(analyst_token, None),
-            "path": "/v1.0/diagrid/mcp/mcp-server",
+            "path": "/v1.0/diagrid/mcp/postgresql-mcp",
             "method": "POST",
         }
 
     # Remaining spoofs use raw HTTP (they target Catalyst's edge, above
     # tool-level ACL). Note a 401 here means the *dapr-api-token* was
-    # rejected at Catalyst's edge — a different 401 than the one mcp-server's
+    # rejected at Catalyst's edge — a different 401 than the one postgresql-mcp's
     # bearer middleware returns when Catalyst's own OAuth2 auth isn't
     # configured (see ../oauth2/setup.sh / DEMO.md's step-up beat).
     if kind == "no-token":
@@ -854,7 +854,7 @@ async def spoof(payload: dict = Body(...)) -> dict:
         "status": status,
         "role": role,
         "op": op,
-        "server": "mcp-server",
+        "server": "postgresql-mcp",
         "jwt": kind == "bad-jwt-delete",
         "source": "external",
         "t": t_iso,
@@ -864,7 +864,7 @@ async def spoof(payload: dict = Body(...)) -> dict:
         "durationMs": duration_ms,
         "attackKind": kind,
         "headersSent": _headers_sent(catalyst_token_sent, jwt_sent),
-        "path": "/v1.0/diagrid/mcp/mcp-server",
+        "path": "/v1.0/diagrid/mcp/postgresql-mcp",
         "method": "POST",
     }
 

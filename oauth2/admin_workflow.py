@@ -1,21 +1,12 @@
-"""Admin destructive MCP call helper, parameterized by action.
+"""Admin destructive MCP call helper.
 
 Usage:
-  uv run python oauth2/admin_workflow.py insert
-      → inserts a "Demo Target" employee, prints "id=N" on success
-
+  uv run python oauth2/admin_workflow.py insert            → prints "id=N"
   uv run python oauth2/admin_workflow.py delete <employee_id>
-      → deletes the employee with that id
 
-Both calls go through Catalyst via the MCPServer proxy endpoint and require
-admin's Catalyst API token. mcp-server also requires a valid Keycloak JWT on
-every call — checked in its own application code (see
-../servers/mcp_server.py) — but that JWT is Catalyst's own, attached
-automatically via OAuth2 client-credentials configured on the MCPServer
-resource (./setup.sh). Nothing here handles a JWT directly.
-
-Env vars expected:
-  DAPR_HTTP_ENDPOINT, DAPR_API_TOKEN
+Calls go through Catalyst's MCP proxy with admin's Catalyst API token
+(env: DAPR_HTTP_ENDPOINT, DAPR_API_TOKEN). Never handles a JWT directly —
+that's Catalyst's own, attached via oauth2/setup.sh.
 """
 
 import argparse
@@ -30,7 +21,7 @@ from mcp.client.streamable_http import streamablehttp_client
 DAPR_HTTP_ENDPOINT = os.environ["DAPR_HTTP_ENDPOINT"]
 DAPR_API_TOKEN = os.environ["DAPR_API_TOKEN"]
 
-MCP_URL = f"{DAPR_HTTP_ENDPOINT}/v1.0/diagrid/mcp/mcp-server"
+MCP_URL = f"{DAPR_HTTP_ENDPOINT}/v1.0/diagrid/mcp/postgresql-mcp"
 
 
 async def _call(tool: str, args: dict) -> str:

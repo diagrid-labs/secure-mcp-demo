@@ -1,14 +1,8 @@
 #!/usr/bin/env bash
-# Force-stop all dev sessions for this project's app-ids AND kill any
-# orphaned local server processes still bound to the MCP server port.
-#
-# Run before `diagrid dev run -f dev.yaml` if you're seeing:
-#   - HTTP 502s on calls that should pass (stale Catalyst tunnels)
-#   - "address already in use" errors at server startup (orphaned Python
-#     processes from prior diagrid dev run cycles)
-#
-# Idempotent and safe to run anytime. Doesn't touch app-ids,
-# MCPServer resource, or Postgres state.
+# Stop all dev sessions for this project's app-ids and kill any orphaned
+# local server process still bound to the MCP server port. Run before
+# `diagrid dev run -f dev.yaml` if you see stale-tunnel 502s or
+# "address already in use" at startup. Doesn't touch Catalyst resources.
 
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -17,14 +11,13 @@ cd "$SCRIPT_DIR"
 PROJECT="${DIAGRID_PROJECT:-secure-mcp-demo}"
 
 APP_IDS=(
-    mcp-server
-    analyst-agent
-    ops-agent
-    admin-agent
+    postgresql-mcp
+    analyst-mcp-client
+    ops-mcp-client
+    admin-mcp-client
 )
 
-# Single combined server port — must match dev.yaml / servers/mcp_server.py
-SERVER_PORTS=(8001)
+SERVER_PORT=8001  # must match dev.yaml / servers/postgresql_mcp.py
 
 echo ">>> Stopping any active dev sessions for project: $PROJECT"
 for appid in "${APP_IDS[@]}"; do
@@ -32,14 +25,12 @@ for appid in "${APP_IDS[@]}"; do
 done
 
 echo ""
-echo ">>> Killing any orphaned processes on MCP server port (${SERVER_PORTS[*]})"
-for port in "${SERVER_PORTS[@]}"; do
-    pids=$(lsof -ti ":$port" 2>/dev/null || true)
-    if [ -n "$pids" ]; then
-        echo "  port $port: killing $pids"
-        echo "$pids" | xargs kill -9 2>/dev/null || true
-    fi
-done
+echo ">>> Killing any orphaned process on MCP server port ($SERVER_PORT)"
+pids=$(lsof -ti ":$SERVER_PORT" 2>/dev/null || true)
+if [ -n "$pids" ]; then
+    echo "  port $SERVER_PORT: killing $pids"
+    echo "$pids" | xargs kill -9 2>/dev/null || true
+fi
 
 echo ""
 echo ">>> Current dev status:"

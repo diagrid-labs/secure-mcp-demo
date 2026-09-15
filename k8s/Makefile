@@ -73,7 +73,7 @@ help:
 	@echo ""
 	@echo "Targets:"
 	@echo "  make install-ingress  install nginx-ingress with Azure LB + DNS label"
-	@echo "  make build-images     build mcp-server + ui-backend images"
+	@echo "  make build-images     build postgresql-mcp + ui-backend images"
 	@echo "  make push-images      docker push both"
 	@echo "  make deps             helm dependency build (resolves bitnami tgzs)"
 	@echo "  make lint             helm lint"
@@ -88,7 +88,7 @@ help:
 fqdns:
 	@echo "ui-backend:   http://$(INGRESS_FQDN)/"
 	@echo "keycloak:     http://$(INGRESS_FQDN)/keycloak"
-	@echo "mcp-server:   http://$(INGRESS_FQDN)/mcp"
+	@echo "postgresql-mcp:   http://$(INGRESS_FQDN)/mcp"
 
 # Multi-arch via buildx: AKS nodes are linux/amd64, local dev (Apple Silicon)
 # is linux/arm64. One manifest covers both; --push goes straight to Docker Hub
@@ -106,7 +106,7 @@ build-images:
 	docker buildx inspect $(BUILDX_BUILDER) > /dev/null 2>&1 \
 	  || docker buildx create --name $(BUILDX_BUILDER) --driver docker-container
 	docker buildx build --builder $(BUILDX_BUILDER) --platform $(PLATFORMS) --push \
-	  -f docker/mcp-server.Dockerfile -t $(REGISTRY)/secure-mcp-server:$(IMAGE_TAG) $(REPO_ROOT)
+	  -f docker/postgresql-mcp.Dockerfile -t $(REGISTRY)/secure-postgresql-mcp:$(IMAGE_TAG) $(REPO_ROOT)
 	docker buildx build --builder $(BUILDX_BUILDER) --platform $(PLATFORMS) --push \
 	  -f docker/ui-backend.Dockerfile -t $(REGISTRY)/secure-mcp-ui:$(IMAGE_TAG)     $(REPO_ROOT)
 
@@ -165,7 +165,7 @@ CATALYST_ENDPOINT_FLAGS := \
   $(if $(CATALYST_GRPC_ENDPOINT),--set catalyst.grpcEndpoint=$(CATALYST_GRPC_ENDPOINT),)
 
 HELM_COMMON_FLAGS = \
-  --set mcpServer.image.repository=$(REGISTRY)/secure-mcp-server \
+  --set mcpServer.image.repository=$(REGISTRY)/secure-postgresql-mcp \
   --set mcpServer.image.tag=$(IMAGE_TAG) \
   --set ui.image.repository=$(REGISTRY)/secure-mcp-ui \
   --set ui.image.tag=$(IMAGE_TAG) \
@@ -189,14 +189,14 @@ render: deps
 agent-tokens:
 	@kubectl create namespace $(NAMESPACE) --dry-run=client -o yaml | kubectl apply -f -
 	@if [ -z "$(DIAGRID_API_KEY)" ]; then \
-	  echo "WARNING: DIAGRID_API_KEY is not set — skipping catalyst-agent-tokens Secret"; \
+	  echo "WARNING: DIAGRID_API_KEY is not set — skipping catalyst-mcp-client-tokens Secret"; \
 	  echo "         UI backend will fall back to diagrid CLI lookup at runtime."; \
 	else \
 	  echo ">>> Creating/updating Catalyst agent token Secret"; \
-	  ANALYST_TOKEN=$$(diagrid appid get analyst-agent --project $(DIAGRID_PROJECT) -o json | jq -r '.status.apiToken // empty') ; \
-	  OPS_TOKEN=$$(diagrid appid get ops-agent --project $(DIAGRID_PROJECT) -o json | jq -r '.status.apiToken // empty') ; \
-	  ADMIN_TOKEN=$$(diagrid appid get admin-agent --project $(DIAGRID_PROJECT) -o json | jq -r '.status.apiToken // empty') ; \
-	  kubectl -n $(NAMESPACE) create secret generic catalyst-agent-tokens \
+	  ANALYST_TOKEN=$$(diagrid appid get analyst-mcp-client --project $(DIAGRID_PROJECT) -o json | jq -r '.status.apiToken // empty') ; \
+	  OPS_TOKEN=$$(diagrid appid get ops-mcp-client --project $(DIAGRID_PROJECT) -o json | jq -r '.status.apiToken // empty') ; \
+	  ADMIN_TOKEN=$$(diagrid appid get admin-mcp-client --project $(DIAGRID_PROJECT) -o json | jq -r '.status.apiToken // empty') ; \
+	  kubectl -n $(NAMESPACE) create secret generic catalyst-mcp-client-tokens \
 	    --from-literal=analyst=$$ANALYST_TOKEN \
 	    --from-literal=ops=$$OPS_TOKEN \
 	    --from-literal=admin=$$ADMIN_TOKEN \
@@ -251,12 +251,12 @@ register-appids:
 	@echo ">>> Applying MCPServer resource with production FQDN to Catalyst"
 	@TMP=$$(mktemp /tmp/secure-mcp-mcpserver-XXXXXX.yaml); \
 	sed 's|http://localhost:8001/mcp|http://$(INGRESS_FQDN)/mcp|g' \
-	  $(REPO_ROOT)/resources/mcp-server.yaml > "$$TMP"; \
+	  $(REPO_ROOT)/resources/postgresql-mcp.yaml > "$$TMP"; \
 	diagrid apply --project $(DIAGRID_PROJECT) -f "$$TMP"; \
 	rm -f "$$TMP"
 	@echo ""
 	@echo "Verify Catalyst → app reachability:"
-	@echo "  diagrid mcpserver get mcp-server --project $(DIAGRID_PROJECT) -o json | jq '.status'"
+	@echo "  diagrid mcpserver get postgresql-mcp --project $(DIAGRID_PROJECT) -o json | jq '.status'"
 
 uninstall:
 	-helm uninstall $(RELEASE) -n $(NAMESPACE)

@@ -55,29 +55,29 @@ spec:
             - name: ANALYST_AGENT_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: catalyst-agent-tokens
+                  name: catalyst-mcp-client-tokens
                   key: analyst
                   optional: true
             - name: OPS_AGENT_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: catalyst-agent-tokens
+                  name: catalyst-mcp-client-tokens
                   key: ops
                   optional: true
             - name: ADMIN_AGENT_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: catalyst-agent-tokens
+                  name: catalyst-mcp-client-tokens
                   key: admin
                   optional: true
             - name: HAS_AGENT_TOKENS
               valueFrom:
                 secretKeyRef:
-                  name: catalyst-agent-tokens
+                  name: catalyst-mcp-client-tokens
                   key: present
                   optional: true
 
-            # Catalyst's own OAuth2 client-credentials (Catalyst -> mcp-server).
+            # Catalyst's own OAuth2 client-credentials (Catalyst -> postgresql-mcp).
             # ui_backend's step-up toggle (POST /api/policy/apply) uses these
             # to configure/remove Catalyst's own OAuth2 auth on the MCPServer
             # resource — see oauth2/setup.sh and README.md's "OIDC / bearer

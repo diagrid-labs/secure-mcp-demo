@@ -2,7 +2,7 @@
   Two Ingress resources fronting the whole stack via nginx-ingress.
 
   Routing on the one host:
-    /mcp/*     → mcp-server    (rewrite to /mcp)
+    /mcp/*     → postgresql-mcp    (rewrite to /mcp)
     /keycloak/* → keycloak     (no rewrite — KC_HTTP_RELATIVE_PATH=/keycloak)
     /           → ui-backend   (catch-all)
 

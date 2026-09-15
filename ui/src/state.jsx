@@ -25,8 +25,8 @@ const OPS   = ["query", "write", "delete"];
 
 // Single combined MCP server — every op goes through the same app and the
 // same Catalyst MCP proxy path.
-const MCP_SERVER = "mcp-server";
-const MCP_PATH   = "/v1.0/diagrid/mcp/mcp-server";
+const MCP_SERVER = "postgresql-mcp";
+const MCP_PATH   = "/v1.0/diagrid/mcp/postgresql-mcp";
 
 const VERB_OF = {
   query:  { name: "query",           args: "sql='SELECT * FROM employees ORDER BY id'" },
@@ -188,7 +188,7 @@ const actions = {
   // The ONLY path that actually calls /api/policy/apply for the JWT flag.
   // Configures (or removes) Catalyst's own OAuth2 client-credentials auth
   // on the MCPServer resource — a GLOBAL setting, not per-call. No agent
-  // or UI call ever presents its own JWT to mcp-server; this is the only
+  // or UI call ever presents its own JWT to postgresql-mcp; this is the only
   // thing that controls whether one reaches it at all.
   async confirmJwtToggle() {
     const s = store.get();
@@ -322,7 +322,7 @@ const actions = {
 //
 // Gate order matches the real architecture: Catalyst's MCPServer access
 // policy is checked first, at Catalyst's edge — an ACL deny never reaches
-// mcp-server at all. mcp-server's own JWT verification (Catalyst's own
+// postgresql-mcp at all. postgresql-mcp's own JWT verification (Catalyst's own
 // OAuth2 auth, see README.md's "OIDC / bearer middleware") is the second,
 // independent gate, checked on every op alike — not just delete.
 function resolveCall({ role, op, configured, jwtMiddleware }) {

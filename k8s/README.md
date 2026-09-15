@@ -55,7 +55,7 @@ k8s/
 ├── CATALYST.md                     (Catalyst Cloud connection model)
 ├── Makefile                        (install-ingress, install, register-appids…)
 ├── docker/
-│   ├── mcp-server.Dockerfile       single image, used for all 3 MCP servers
+│   ├── postgresql-mcp.Dockerfile   single image, used for all 3 MCP servers
 │   └── ui-backend.Dockerfile       UI backend + bundled prototype
 └── helm/
     └── secure-mcp/
@@ -110,7 +110,7 @@ AZURE_REGION=eastus \
 make install
 
 # make install also runs make agent-tokens when DIAGRID_API_KEY is set.
-# That caches analyst/ops/admin Catalyst tokens in the catalyst-agent-tokens
+# That caches analyst/ops/admin Catalyst tokens in the catalyst-mcp-client-tokens
 # Secret so the UI backend does not need to shell out for every invoke.
 
 # 5. Register the per-op URLs with Catalyst
@@ -195,7 +195,7 @@ make install
 ### Catalyst agent token cache
 
 The UI backend can invoke Catalyst as analyst, ops, or admin. It reads those
-App ID tokens from an optional Secret named `catalyst-agent-tokens`:
+App ID tokens from an optional Secret named `catalyst-mcp-client-tokens`:
 
 ```text
 analyst
@@ -210,7 +210,7 @@ recreating App IDs:
 
 ```bash
 DIAGRID_API_KEY=$YOUR_KEY make agent-tokens
-kubectl -n secure-mcp get secret catalyst-agent-tokens
+kubectl -n secure-mcp get secret catalyst-mcp-client-tokens
 kubectl -n secure-mcp rollout restart deploy/secure-mcp-ui
 ```
 

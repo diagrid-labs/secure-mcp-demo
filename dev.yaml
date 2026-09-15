@@ -1,22 +1,18 @@
 version: 1
 
-# Single combined MCP server. Agents are launched ad-hoc by run_demo.sh
-# (via separate `diagrid dev run --app-id <agent>` invocations). The
-# MCPServer resource in ./resources/mcp-server.yaml registers this app
-# with Catalyst so callers reach it via /v1.0/diagrid/mcp/mcp-server.
+# The MCPServer resource in ./resources/postgresql-mcp.yaml registers this
+# app with Catalyst so callers reach it via /v1.0/diagrid/mcp/postgresql-mcp.
 
 common:
   resourcesPath: ./resources
 
 apps:
-  - appID: mcp-server
+  - appID: postgresql-mcp
     appDirPath: .
     appPort: 8001
-    command: ["uv", "run", "python", "servers/mcp_server.py"]
-    # servers/mcp_server.py also reads KEYCLOAK_PUBLIC_URL / KEYCLOAK_REALM /
-    # KEYCLOAK_AUDIENCE to verify the bearer JWT on every call — not listed
-    # here since they're inherited from the shell this is launched from
-    # (DEMO.md's pre-demo steps export them before `diagrid dev run`).
+    command: ["uv", "run", "python", "servers/postgresql_mcp.py"]
+    # Also reads KEYCLOAK_PUBLIC_URL / KEYCLOAK_REALM / KEYCLOAK_AUDIENCE
+    # (inherited from the launching shell — see DEMO.md's pre-demo steps).
     env:
       DB_USER_QUERY: mcp_db_query
       DB_PASSWORD_QUERY: query_pw

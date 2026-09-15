@@ -1,6 +1,6 @@
 """Parameterized MCP agent.
 
-Reads AGENT_ROLE from env and calls the combined mcp-server through
+Reads AGENT_ROLE from env and calls the combined postgresql-mcp through
 Catalyst's MCP proxy endpoint. The asyncgen exception handler captures
 HTTP errors that surface during MCPStreamableHTTPTool shutdown.
 """
@@ -17,7 +17,7 @@ AGENT_ROLE = os.environ.get("AGENT_ROLE", "analyst")
 DAPR_HTTP_ENDPOINT = os.environ["DAPR_HTTP_ENDPOINT"]
 DAPR_API_TOKEN = os.environ["DAPR_API_TOKEN"]
 
-MCP_URL = f"{DAPR_HTTP_ENDPOINT}/v1.0/diagrid/mcp/mcp-server"
+MCP_URL = f"{DAPR_HTTP_ENDPOINT}/v1.0/diagrid/mcp/postgresql-mcp"
 
 _connection_error = None
 
@@ -48,13 +48,13 @@ async def run():
     try:
         http_client = httpx.AsyncClient(headers={"dapr-api-token": DAPR_API_TOKEN})
         async with MCPStreamableHTTPTool(
-            name="mcp-server",
+            name="postgresql-mcp",
             url=MCP_URL,
             http_client=http_client,
         ) as mcp_tool:
             agent = Agent(
                 OpenAIChatClient(model="gpt-4o-mini"),
-                name=f"{AGENT_ROLE}-agent",
+                name=f"{AGENT_ROLE}-mcp-client",
                 tools=mcp_tool,
             )
 

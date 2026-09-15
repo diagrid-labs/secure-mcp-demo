@@ -1,23 +1,11 @@
-"""Matrix probe agent.
+"""Matrix probe: deterministic (no LLM) verification harness.
 
-For the role given in AGENT_ROLE, attempt one tool call for each operation
-against the combined mcp-server via Catalyst's MCP proxy endpoint. Print a
-✓/✗ row showing which tools the role's identity is allowed to invoke.
+For the role in AGENT_ROLE, calls each tool via Catalyst's MCP proxy and
+prints a ✓/✗ row. Catalyst enforces per-tool access (403 if denied); each
+probe opens its own session so one denial doesn't abort the rest.
 
-Catalyst enforces per-tool access: unauthorized tool calls are rejected with
-403, and filtered out of tools/list. Each probe opens its own session so a
-denial on one tool doesn't abort the others.
-
-mcp-server also requires a valid Keycloak JWT on every call — checked in
-its own application code (see servers/mcp_server.py) — but that JWT is
-Catalyst's own, attached automatically via OAuth2 client-credentials
-configured directly on the MCPServer resource (./oauth2/setup.sh). The
-agent never sees or handles a JWT at all; a 401 here means Catalyst's own
-OAuth2 auth isn't configured on the MCPServer resource, not anything the
-agent did.
-
-This is the deterministic verification harness — it does not use an LLM.
-The LLM-driven `agent.py` is for live-demo scenes.
+A 401 means Catalyst's own OAuth2 auth isn't configured on the MCPServer
+resource (./oauth2/setup.sh) — the agent never handles a JWT itself.
 """
 
 import asyncio
@@ -31,7 +19,7 @@ AGENT_ROLE = os.environ.get("AGENT_ROLE", "analyst")
 DAPR_HTTP_ENDPOINT = os.environ["DAPR_HTTP_ENDPOINT"]
 DAPR_API_TOKEN = os.environ["DAPR_API_TOKEN"]
 
-MCP_URL = f"{DAPR_HTTP_ENDPOINT}/v1.0/diagrid/mcp/mcp-server"
+MCP_URL = f"{DAPR_HTTP_ENDPOINT}/v1.0/diagrid/mcp/postgresql-mcp"
 
 # One probe per operation. Args chosen to be no-op friendly so repeated
 # runs don't mutate state in surprising ways (update/delete of id 999999).
@@ -57,9 +45,8 @@ def _why(exc, _seen=None):
     if status:
         return f"HTTP {status}"
 
-    # Catalyst proxies an mcp-server-side HTTP error (e.g. our own bearer
-    # JWT rejection) as an MCP-protocol-level error, not a raw HTTP
-    # response — surfaces here as McpError("upstream HTTP 401: ...").
+    # Catalyst proxies a postgresql-mcp-side HTTP error as an MCP-protocol
+    # error, not a raw HTTP response — surfaces as McpError("upstream HTTP 401: ...").
     match = re.search(r"HTTP (\d{3})", str(exc))
     if match:
         return f"HTTP {match.group(1)}"
@@ -98,7 +85,7 @@ RESET = "\033[0m"
 
 
 async def main():
-    print(f"\n{BOLD}[{AGENT_ROLE}-agent]{RESET} probing mcp-server via Catalyst")
+    print(f"\n{BOLD}[{AGENT_ROLE}-mcp-client]{RESET} probing postgresql-mcp via Catalyst")
     rows = []
     for tool, args in PROBES:
         ok, why = await probe_one(tool, args)

@@ -4,7 +4,7 @@ Catalyst Cloud hosts the Dapr runtime centrally. Per
 <https://docs.diagrid.io/develop/connect>, your apps don't run any
 in-cluster sidecar — they expose an HTTP endpoint and Catalyst forwards
 inbound MCP calls to it. This chart uses the **MCPServer resource** model:
-a single `mcp-server` app handles all tools, and Catalyst's MCP proxy
+a single `postgresql-mcp` app handles all tools, and Catalyst's MCP proxy
 routes calls after enforcing the per-tool access policy.
 
 ## Trust model
@@ -21,7 +21,7 @@ ingress controller.
 | Azure network (`loadBalancerSourceRanges` on nginx-ingress LB) | non-Catalyst IPs |
 | Catalyst App Id (token verification at Catalyst's edge) | bearer-token (`dapr-api-token`) presence + validity |
 | MCPServer access policy | per-tool allow/deny per calling app-id |
-| Keycloak JWT verification in `mcp-server` itself (mandatory, always on) | Checked in application code (`servers/mcp_server.py`, via the MCP SDK's `TokenVerifier`) — there's no Dapr sidecar for an MCPServer-resource-managed app-id, so this can't be a platform-level Component/Configuration. Per <https://docs.diagrid.io/develop/mcp/mcp-authentication#oauth-20-client-credentials>, the JWT itself is **Catalyst's own** — fetched via OAuth2 client-credentials configured on the MCPServer resource (`./oauth2/setup.sh`), not presented by the calling agent |
+| Keycloak JWT verification in `postgresql-mcp` itself (mandatory, always on) | Checked in application code (`servers/postgresql_mcp.py`, via the MCP SDK's `TokenVerifier`) — there's no Dapr sidecar for an MCPServer-resource-managed app-id, so this can't be a platform-level Component/Configuration. Per <https://docs.diagrid.io/develop/mcp/mcp-authentication#oauth-20-client-credentials>, the JWT itself is **Catalyst's own** — fetched via OAuth2 client-credentials configured on the MCPServer resource (`./oauth2/setup.sh`), not presented by the calling agent |
 | Postgres role-scoped DB users | last line of defense — caps what each tool can actually execute |
 
 > **Important caveat:** the Keycloak path `/keycloak/*` is also behind the
@@ -67,27 +67,29 @@ kubectl -n secure-mcp get pods --watch
 # 7. Apply the MCPServer resource with the production FQDN
 make register-appids
 
-# 8. Confirm Catalyst can reach mcp-server
-diagrid mcpserver get mcp-server --project secure-mcp-demo -o json | jq '.status'
-# status may show "error" here — expected. mcp-server's own JWT verification
-# (servers/mcp_server.py) already requires a JWT on every call, including
+# 8. Confirm Catalyst can reach postgresql-mcp
+diagrid mcpserver get postgresql-mcp --project secure-mcp-demo -o json | jq '.status'
+# status may show "error" here — expected. postgresql-mcp's own JWT verification
+# (servers/postgresql_mcp.py) already requires a JWT on every call, including
 # Catalyst's own connectivity probe, and nothing supplies one until step 11.
 
 # 9. Confirm Keycloak's OIDC discovery returns the right issuer
 curl -s "http://securemcp.eastus.cloudapp.azure.com/keycloak/realms/secure-mcp/.well-known/openid-configuration" | jq .issuer
 # expect: http://securemcp.eastus.cloudapp.azure.com/keycloak/realms/secure-mcp
 
-# 10. Grant tool access (applies canonical demo matrix)
-cd .. && ./scripts/up.sh
+# 10. Grant tool access (see README.md's "Granting + revoking")
+cd .. && diagrid mcpserver access grant postgresql-mcp --caller analyst-mcp-client --allow-tools query --project secure-mcp-demo --wait
+diagrid mcpserver access grant postgresql-mcp --caller ops-mcp-client     --allow-tools query,insert_employee,update_salary --project secure-mcp-demo --wait
+diagrid mcpserver access grant postgresql-mcp --caller admin-mcp-client   --allow-tools query,insert_employee,update_salary,delete_employee,truncate_table --project secure-mcp-demo --wait
 
 # 11. Enable Catalyst's own OAuth2 auth on the MCPServer resource — this is
-#     what actually satisfies mcp-server's JWT requirement from here on (see
+#     what actually satisfies postgresql-mcp's JWT requirement from here on (see
 #     "Trust model" above and README.md's "OIDC / bearer middleware"). Must
-#     match the URL the chart already wired into mcp-server's own env vars
+#     match the URL the chart already wired into postgresql-mcp's own env vars
 #     (KEYCLOAK_PUBLIC_URL = http://<ingress-fqdn>/keycloak, from ingress.host).
 export KEYCLOAK_PUBLIC_URL="http://securemcp.eastus.cloudapp.azure.com/keycloak"
 cd .. && ./oauth2/setup.sh && cd k8s
-diagrid mcpserver get mcp-server --project secure-mcp-demo -o json | jq '.status'
+diagrid mcpserver get postgresql-mcp --project secure-mcp-demo -o json | jq '.status'
 # now expect "ready"
 ```
 
@@ -97,10 +99,10 @@ diagrid mcpserver get mcp-server --project secure-mcp-demo -o json | jq '.status
 |---------------|--------------------------|----------------|
 | ui-backend    | `/`                      | passthrough |
 | keycloak      | `/keycloak`              | passthrough (Keycloak runs with `KC_HTTP_RELATIVE_PATH=/keycloak`) |
-| mcp-server    | `/mcp`                   | rewrite to `/mcp` upstream |
+| postgresql-mcp | `/mcp`                   | rewrite to `/mcp` upstream |
 
 Callers never hit these paths directly. Catalyst's MCP proxy endpoint
-(`/v1.0/diagrid/mcp/mcp-server` on the Catalyst HTTP endpoint) is the
+(`/v1.0/diagrid/mcp/postgresql-mcp` on the Catalyst HTTP endpoint) is the
 only entry point. Catalyst reads the MCPServer resource's
 `spec.endpoint.streamableHTTP.url` and proxies to
 `http://securemcp.eastus.cloudapp.azure.com/mcp`.

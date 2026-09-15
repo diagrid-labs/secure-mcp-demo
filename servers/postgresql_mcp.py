@@ -28,7 +28,7 @@ from mcp.server.fastmcp import FastMCP
 
 from common import heartbeat
 
-SERVER = "mcp-server"
+SERVER = "postgresql-mcp"
 
 KEYCLOAK_PUBLIC_URL = os.environ.get("KEYCLOAK_PUBLIC_URL", "http://localhost:8080")
 KEYCLOAK_REALM = os.environ.get("KEYCLOAK_REALM", "secure-mcp")

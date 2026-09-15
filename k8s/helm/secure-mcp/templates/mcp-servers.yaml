@@ -11,20 +11,20 @@ metadata:
   name: {{ .Values.mcpServer.appId }}
   labels:
     {{- include "secure-mcp.labels" . | nindent 4 }}
-    app.kubernetes.io/component: mcp-server
+    app.kubernetes.io/component: postgresql-mcp
 spec:
   replicas: 1
   selector:
     matchLabels:
       app.kubernetes.io/name: {{ .Chart.Name }}
       app.kubernetes.io/instance: {{ .Release.Name }}
-      app.kubernetes.io/component: mcp-server
+      app.kubernetes.io/component: postgresql-mcp
   template:
     metadata:
       labels:
         app.kubernetes.io/name: {{ .Chart.Name }}
         app.kubernetes.io/instance: {{ .Release.Name }}
-        app.kubernetes.io/component: mcp-server
+        app.kubernetes.io/component: postgresql-mcp
       annotations:
         {{- include "secure-mcp.catalystAnnotations" (dict "appId" .Values.mcpServer.appId "port" .Values.mcpServer.port "Values" .Values) | nindent 8 }}
     spec:
@@ -70,8 +70,8 @@ spec:
                   key: delete
             - name: UI_BACKEND_URL
               value: "http://{{ .Release.Name }}-ui:80"
-            # mcp-server verifies the bearer JWT on every call itself (see
-            # servers/mcp_server.py) — there's no Dapr sidecar to do it for
+            # postgresql-mcp verifies the bearer JWT on every call itself (see
+            # servers/postgresql_mcp.py) — there's no Dapr sidecar to do it for
             # an MCPServer-resource-routed app. Needs Keycloak's JWKS,
             # reachable at the public ingress FQDN (Catalyst attaches the
             # token via oauth2/setup.sh; the audience must match).
@@ -90,13 +90,13 @@ metadata:
   name: {{ .Values.mcpServer.appId }}
   labels:
     {{- include "secure-mcp.labels" . | nindent 4 }}
-    app.kubernetes.io/component: mcp-server
+    app.kubernetes.io/component: postgresql-mcp
 spec:
   type: {{ .Values.mcpServer.service.type }}
   selector:
     app.kubernetes.io/name: {{ .Chart.Name }}
     app.kubernetes.io/instance: {{ .Release.Name }}
-    app.kubernetes.io/component: mcp-server
+    app.kubernetes.io/component: postgresql-mcp
   ports:
     - name: http
       port: {{ .Values.mcpServer.port }}

@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
-# Revoke every agent's access to every tool on mcp-server — back to the
-# deny-all baseline. Run before a demo (via the Catalyst UI) to guarantee a
-# clean starting state, or between rehearsals.
+# Revoke every agent's access to every tool — back to the deny-all baseline.
+# Run before a demo or between rehearsals for a clean starting state.
 
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -24,9 +23,9 @@ echo "============================================"
 for op in query write delete; do
     tools="${OP_TOOLS[$op]}"
     for agent in "${AGENTS[@]}"; do
-        echo ">>> Revoking [${agent}-agent] access to tools: ${tools}"
-        diagrid mcpserver access revoke mcp-server \
-            --caller "${agent}-agent" \
+        echo ">>> Revoking [${agent}-mcp-client] access to tools: ${tools}"
+        diagrid mcpserver access revoke postgresql-mcp \
+            --caller "${agent}-mcp-client" \
             --allow-tools "$tools" \
             --project "$PROJECT" \
             --wait \
