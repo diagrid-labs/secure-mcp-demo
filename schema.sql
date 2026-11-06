@@ -28,7 +28,7 @@ INSERT INTO employees (name, email, department_id, salary, hired_on) VALUES
     ('Eve Martinez',   'eve@example.com',   4, 110000, '2019-06-05');
 
 -- Per-operation DB roles (defense in depth) ----------------------------------
--- Each per-op MCP server connects as its own DB role. Even if a Catalyst ACL
+-- Each per-op MCP server connects as its own DB role. Even if a Diagrid ACL
 -- is misconfigured and the wrong agent reaches an operation, the DB role
 -- caps what that operation can actually do.
 

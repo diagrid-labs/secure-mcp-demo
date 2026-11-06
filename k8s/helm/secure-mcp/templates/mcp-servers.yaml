@@ -73,7 +73,7 @@ spec:
             # postgresql-mcp verifies the bearer JWT on every call itself (see
             # servers/postgresql_mcp.py) — there's no Dapr sidecar to do it for
             # an MCPServer-resource-routed app. Needs Keycloak's JWKS,
-            # reachable at the public ingress FQDN (Catalyst attaches the
+            # reachable at the public ingress FQDN (Diagrid attaches the
             # token via oauth2/setup.sh; the audience must match).
             - name: KEYCLOAK_PUBLIC_URL
               value: "http://{{ .Values.ingress.host }}/keycloak"

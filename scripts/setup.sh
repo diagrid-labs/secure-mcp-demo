@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Creates the Catalyst project, App IDs, and MCPServer resource.
+# Creates the Diagrid project, App IDs, and MCPServer resource.
 # Idempotent — safe to re-run. Leaves a deny-all ACL policy; the server
 # itself always requires a Keycloak JWT (see README.md's "OIDC / bearer
 # middleware"), so nothing works until ./oauth2/setup.sh runs too.
@@ -18,7 +18,7 @@ echo " Baseline: deny-all MCPServer access policy"
 echo "============================================"
 
 echo ""
-echo ">>> Creating Catalyst project"
+echo ">>> Creating Diagrid project"
 diagrid project get "$PROJECT" > /dev/null 2>&1 \
     || diagrid project create "$PROJECT"
 diagrid project use "$PROJECT"
@@ -46,11 +46,11 @@ echo "============================================"
 echo " Setup complete"
 echo "============================================"
 echo ""
-echo " Catalyst:   deny-all MCPServer access policy"
+echo " Diagrid:   deny-all MCPServer access policy"
 echo " OIDC:       postgresql-mcp requires a Keycloak JWT on every call,"
 echo "             but nothing attaches one yet, so every call fails (401)."
 echo ""
 echo " Next:"
 echo "   diagrid dev run --project $PROJECT -f dev.yaml"
 echo "   diagrid mcpserver access grant ...   # grant the ACL matrix (see README.md)"
-echo "   ./oauth2/setup.sh                    # let Catalyst attach its own JWT"
+echo "   ./oauth2/setup.sh                    # let Diagrid attach its own JWT"

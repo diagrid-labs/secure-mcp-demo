@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Reverts ./oauth2/setup.sh: strips Catalyst's OAuth2 auth from the
+# Reverts ./oauth2/setup.sh: strips Diagrid's OAuth2 auth from the
 # MCPServer resource. postgresql-mcp still requires a JWT on every call,
 # so with nothing left to supply one, every call goes back to 401.
 
@@ -10,7 +10,7 @@ cd "$SCRIPT_DIR/.."
 PROJECT="${DIAGRID_PROJECT:-secure-mcp-demo}"
 
 echo "============================================"
-echo " Removing Catalyst-native OAuth2 auth from postgresql-mcp"
+echo " Removing Diagrid-native OAuth2 auth from postgresql-mcp"
 echo "============================================"
 
 CURRENT_URL=$(diagrid mcpserver get postgresql-mcp --project "$PROJECT" -o json | \
@@ -33,6 +33,6 @@ diagrid apply --project "$PROJECT" -f "$TMP"
 
 echo ""
 echo "============================================"
-echo " Catalyst -> postgresql-mcp auth removed. Every call now fails (401) —"
+echo " Diagrid -> postgresql-mcp auth removed. Every call now fails (401) —"
 echo " nothing attaches a JWT anymore. Run ./oauth2/setup.sh to re-enable."
 echo "============================================"

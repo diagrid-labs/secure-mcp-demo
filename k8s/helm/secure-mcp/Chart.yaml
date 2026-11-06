@@ -2,7 +2,7 @@ apiVersion: v2
 name: secure-mcp
 description: |
   Demo deployment of the secure-mcp architecture: 3 per-operation MCP
-  servers + a UI backend, fronted by Diagrid Catalyst for per-app-id ACL
+  servers + a UI backend, fronted by Diagrid for per-app-id ACL
   and OIDC-bearer JWT step-up auth on destructive ops.
 type: application
 version: 0.1.0

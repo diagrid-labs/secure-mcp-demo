@@ -4,9 +4,9 @@ Usage:
   uv run python oauth2/admin_workflow.py insert            → prints "id=N"
   uv run python oauth2/admin_workflow.py delete <employee_id>
 
-Calls go through Catalyst's MCP proxy with admin's Catalyst API token
+Calls go through Diagrid's MCP proxy with admin's Diagrid API token
 (env: DAPR_HTTP_ENDPOINT, DAPR_API_TOKEN). Never handles a JWT directly —
-that's Catalyst's own, attached via oauth2/setup.sh.
+that's Diagrid's own, attached via oauth2/setup.sh.
 """
 
 import argparse

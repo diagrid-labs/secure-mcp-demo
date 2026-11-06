@@ -25,8 +25,8 @@ Pods to watch:
 
 {{- if not .Values.catalyst.enabled }}
 
-WARNING: Catalyst integration is disabled (catalyst.enabled=false).
+WARNING: Diagrid integration is disabled (catalyst.enabled=false).
 The UI will render but /api/invoke calls will fail because the MCP server
-URLs aren't registered with Catalyst. Run `make register-appids` once the
+URLs aren't registered with Diagrid. Run `make register-appids` once the
 chart is healthy.
 {{- end }}

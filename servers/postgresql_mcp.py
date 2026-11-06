@@ -3,12 +3,12 @@
 All tools (query, insert_employee, update_salary, delete_employee,
 truncate_table) are exposed through a single FastMCP endpoint. Each tool
 connects using its own dedicated Postgres user so per-operation DB-level
-enforcement is preserved. Catalyst enforces which tools each caller is
+enforcement is preserved. Diagrid enforces which tools each caller is
 allowed to invoke via the MCPServer access policy.
 
 Every call must also carry a valid Keycloak-issued bearer JWT, verified
 below against Keycloak's JWKS (signature + issuer + audience). Nothing
-issues that JWT except Catalyst itself, via OAuth2 client-credentials
+issues that JWT except Diagrid itself, via OAuth2 client-credentials
 configured directly on the MCPServer resource (see ../oauth2/setup.sh) —
 per https://docs.diagrid.io/develop/mcp/mcp-authentication#oauth-20-client-credentials.
 No agent ever fetches or presents one. This verification happens here, in

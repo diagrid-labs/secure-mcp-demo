@@ -8,7 +8,7 @@ function RoleGlyph({ role }) {
 function GateChip({ which, state = "passed", label }) {
   // which: "edge" | "acl" | "jwt"
   // state: "passed" | "failed" | "neutral"
-  const names = { edge: "Catalyst edge", acl: "Catalyst ACL", jwt: "JWT middleware" };
+  const names = { edge: "Diagrid edge", acl: "Diagrid ACL", jwt: "JWT middleware" };
   return (
     <span className={`gate-chip ${which} ${state}`} style={{
       display: "inline-flex", alignItems: "center", gap: 6,

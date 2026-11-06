@@ -17,10 +17,10 @@ helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | 
 {{- printf "%s-keycloak" .Release.Name -}}
 {{- end -}}
 
-{{/* Catalyst Cloud integration is TBD pending the cluster→Cloud
+{{/* Diagrid Cloud integration is TBD pending the cluster→Cloud
      connectivity model (likely an outbound-tunnel agent per pod, not
      in-cluster Dapr/Conductor). This helper is intentionally empty
      until that model is decided. See k8s/CATALYST.md. */}}
 {{- define "secure-mcp.catalystAnnotations" -}}
-{{- /* no annotations until Catalyst Cloud model is chosen */ -}}
+{{- /* no annotations until Diagrid Cloud model is chosen */ -}}
 {{- end -}}

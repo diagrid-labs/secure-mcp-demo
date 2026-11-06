@@ -11,7 +11,7 @@ imagePullSecrets: []
 # ─── Ingress (single Azure LB via nginx-ingress) ─────────────────────────
 # One nginx-ingress controller (installed separately — see k8s/README.md)
 # fronts all five services. The chart emits one Ingress with five path
-# rules. The Catalyst egress allowlist is applied to the nginx-ingress
+# rules. The Diagrid egress allowlist is applied to the nginx-ingress
 # controller's Service, NOT to anything in this chart.
 ingress:
   enabled: true
@@ -68,7 +68,7 @@ ui:
     port: 80
     targetPort: 5050
 
-# ─── Catalyst integration ────────────────────────────────────────────────
+# ─── Diagrid integration ────────────────────────────────────────────────
 catalyst:
   enabled: false
   # Project + API key for the UI backend's control-plane calls
@@ -76,7 +76,7 @@ catalyst:
   project: secure-mcp-demo
   apiKeySecret: catalyst-api-key   # Secret with key `apiKey`
   # Data-plane endpoints — what the UI backend uses to invoke MCP servers
-  # via Catalyst. Set by `make install` from `diagrid project get`.
+  # via Diagrid. Set by `make install` from `diagrid project get`.
   httpEndpoint: ""    # e.g. https://http-prj1429210.cloud.r1.diagrid.io:443
   grpcEndpoint: ""    # e.g. grpc-prj1429210.cloud.r1.diagrid.io:443
 
@@ -86,10 +86,10 @@ mcpDbPasswords:
   write:  write_pw
   delete: delete_pw
 
-# ─── Catalyst's own OAuth2 client-credentials (Catalyst -> postgresql-mcp) ───
+# ─── Diagrid's own OAuth2 client-credentials (Diagrid -> postgresql-mcp) ───
 # Per https://docs.diagrid.io/develop/mcp/mcp-authentication#oauth-20-client-credentials.
 # ui_backend's step-up toggle (POST /api/policy/apply) uses these to
-# configure/remove Catalyst's own OAuth2 auth on the MCPServer resource.
+# configure/remove Diagrid's own OAuth2 auth on the MCPServer resource.
 # Not used by any agent — agents never talk to Keycloak at all.
 catalystProxyClient:
   realm: secure-mcp

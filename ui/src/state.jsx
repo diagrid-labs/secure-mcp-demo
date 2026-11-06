@@ -2,9 +2,9 @@
    secure-mcp demo — state + backend bootstrap
 
    Single source of truth: window.__demo.
-   - configured matrix (mirror of what Catalyst's control plane enforces;
+   - configured matrix (mirror of what Diagrid's control plane enforces;
      read-only here, edited via shell scripts)
-   - jwtMiddlewareCfg: whether Catalyst's own OAuth2 client-credentials are
+   - jwtMiddlewareCfg: whether Diagrid's own OAuth2 client-credentials are
      configured on the MCPServer resource (global — not a per-call choice;
      no agent or UI call ever presents its own JWT). Toggling this in the
      UI actually calls oauth2/setup.sh's equivalent via /api/policy/apply.
@@ -24,7 +24,7 @@ const ROLES = ["analyst", "ops", "admin"];
 const OPS   = ["query", "write", "delete"];
 
 // Single combined MCP server — every op goes through the same app and the
-// same Catalyst MCP proxy path.
+// same Diagrid MCP proxy path.
 const MCP_SERVER = "postgresql-mcp";
 const MCP_PATH   = "/v1.0/diagrid/mcp/postgresql-mcp";
 
@@ -86,7 +86,7 @@ const initialState = {
 
   // Illustrative client-side JWT preview (independent client_credentials
   // fetch against Keycloak's catalyst-proxy client — see README.md's
-  // "OIDC / bearer middleware"). NOT the token Catalyst actually attaches
+  // "OIDC / bearer middleware"). NOT the token Diagrid actually attaches
   // to any /api/invoke call; shown purely to demonstrate what one looks
   // like once step-up is enabled.
   jwtPreview:      null,    // null | { token, header, claims, fetchedAt, expiresInSeconds }
@@ -186,7 +186,7 @@ const actions = {
   },
 
   // The ONLY path that actually calls /api/policy/apply for the JWT flag.
-  // Configures (or removes) Catalyst's own OAuth2 client-credentials auth
+  // Configures (or removes) Diagrid's own OAuth2 client-credentials auth
   // on the MCPServer resource — a GLOBAL setting, not per-call. No agent
   // or UI call ever presents its own JWT to postgresql-mcp; this is the only
   // thing that controls whether one reaches it at all.
@@ -320,9 +320,9 @@ const actions = {
 // renderable standalone (e.g. opened from a file:// URL). Real demos run
 // against the backend and never hit this path.
 //
-// Gate order matches the real architecture: Catalyst's MCPServer access
-// policy is checked first, at Catalyst's edge — an ACL deny never reaches
-// postgresql-mcp at all. postgresql-mcp's own JWT verification (Catalyst's own
+// Gate order matches the real architecture: Diagrid's MCPServer access
+// policy is checked first, at Diagrid's edge — an ACL deny never reaches
+// postgresql-mcp at all. postgresql-mcp's own JWT verification (Diagrid's own
 // OAuth2 auth, see README.md's "OIDC / bearer middleware") is the second,
 // independent gate, checked on every op alike — not just delete.
 function resolveCall({ role, op, configured, jwtMiddleware }) {
@@ -345,7 +345,7 @@ function resolveCall({ role, op, configured, jwtMiddleware }) {
       status: 401,
       role, op, server: MCP_SERVER, jwt: false, source: "ui", t, verb,
       sawTraffic: false,
-      reason: "Catalyst's own OAuth2 auth isn't configured on the MCPServer resource yet",
+      reason: "Diagrid's own OAuth2 auth isn't configured on the MCPServer resource yet",
     });
   }
 

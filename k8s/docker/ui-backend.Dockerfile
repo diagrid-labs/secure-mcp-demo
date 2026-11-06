@@ -1,6 +1,6 @@
 # UI backend image — FastAPI app + static UI files. Bundles the diagrid CLI
 # so policy/apply + identity fetches can shell out the same way local dev does.
-# In a hardened deploy you'd swap shelling-out for the Catalyst REST API directly.
+# In a hardened deploy you'd swap shelling-out for the Diagrid REST API directly.
 #
 # Build context must be the repo root:
 #   docker build -f k8s/docker/ui-backend.Dockerfile -t secure-mcp-ui:dev .

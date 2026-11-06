@@ -1,6 +1,6 @@
 /* Agent Console — Role, JWT toggle, three operation buttons, + the
    HTTP Response gate trace inline below. The buttons surface the actual
-   path + verb that will hit Catalyst; the response surfaces the masked
+   path + verb that will hit Diagrid; the response surfaces the masked
    tokens the backend sent and which gate (App Id / ACL / JWT) decided.
 */
 
@@ -8,7 +8,7 @@ function AgentConsole() {
   const [s, a] = window.__demo.useDemo();
   const { ROLES, OPS, MCP_PATH } = window.__demo;
   const lastResult = s.lastResult;
-  // Whether Catalyst's own OAuth2 auth is configured on the MCPServer
+  // Whether Diagrid's own OAuth2 auth is configured on the MCPServer
   // resource — a global setting (see oauth2/setup.sh), not per-call. JWT
   // verification itself is always required, on every op; this reflects
   // whether anything currently satisfies it.
@@ -51,7 +51,7 @@ function AgentConsole() {
           </div>
 
           <div>
-            <div className="field-h">Catalyst OAuth2 auth (Keycloak)</div>
+            <div className="field-h">Diagrid OAuth2 auth (Keycloak)</div>
             <div className={`jwt-status-panel ${jwtConfigured ? "on" : "off"} ${s.busyPolicy ? "busy" : ""}`}>
               <div className="lbl">
                 <span className="top">Keycloak JWT</span>
@@ -59,7 +59,7 @@ function AgentConsole() {
                   {s.busyPolicy
                     ? "updating…"
                     : jwtConfigured
-                      ? "Catalyst attaches its own token to every call"
+                      ? "Diagrid attaches its own token to every call"
                       : "not configured — every call fails, on every op"}
                 </span>
               </div>
@@ -177,7 +177,7 @@ function statusText(s) {
   return s === 200 ? "OK" : s === 401 ? "Unauthorized" : s === 403 ? "Forbidden" : "";
 }
 
-// Shows only a prefix of the illustrative JWT — this is Catalyst's own
+// Shows only a prefix of the illustrative JWT — this is Diagrid's own
 // token (see README.md's "OIDC / bearer middleware"), not something that
 // needs to stay secret from this UI's own audience, but the full token is
 // long and not the point; a recognizable subset is enough to show it's real.
@@ -198,8 +198,8 @@ function GateTrace({ result, jwtToken }) {
     acl  = { state: "passed", detail: `'${r.role}' allowed on ${r.server}` };
     // Required on every op, always — postgresql-mcp verifies a JWT on every
     // call, no exceptions for query/write. A successful call only ever
-    // happens because Catalyst's own token satisfied it.
-    jwt = { state: "passed", detail: "JWT verified — Catalyst's own token (iss, aud, sig)" };
+    // happens because Diagrid's own token satisfied it.
+    jwt = { state: "passed", detail: "JWT verified — Diagrid's own token (iss, aud, sig)" };
   } else if (r.kind === "edge-fail") {
     edge = { state: "failed", detail: r.reason };
     acl  = { state: "skipped", detail: "not reached" };
@@ -218,14 +218,14 @@ function GateTrace({ result, jwtToken }) {
     <>
       <GateRow
         which="edge"
-        name="Catalyst App Id"
+        name="Diagrid App Id"
         detail={edge.detail}
         state={edge.state}
         header={daprToken ? { k: "dapr-api-token", v: daprToken } : null}
       />
       <GateRow
         which="acl"
-        name="Catalyst ACL"
+        name="Diagrid ACL"
         detail={acl.detail}
         state={acl.state}
       />
@@ -331,15 +331,15 @@ function JwtConfirmModal({ s, a }) {
           {enabling ? (
             <>
               <p>
-                This adds OAuth2 on the Catalyst <code>postgresql-mcp</code> proxy,
+                This adds OAuth2 on the Diagrid <code>postgresql-mcp</code> proxy,
                 enforced by the MCP server itself — every call now needs a
-                valid Keycloak JWT, which Catalyst attaches automatically.
+                valid Keycloak JWT, which Diagrid attaches automatically.
               </p>
               <p className="fine">
                 This will also fetch a real, illustrative JWT from Keycloak using
-                the same <code>catalyst-proxy</code> client identity Catalyst
+                the same <code>catalyst-proxy</code> client identity Diagrid
                 itself uses, purely to show you what that token looks like —
-                it is <b>not</b> the literal token Catalyst attaches to any
+                it is <b>not</b> the literal token Diagrid attaches to any
                 specific call.
               </p>
             </>

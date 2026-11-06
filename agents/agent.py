@@ -1,7 +1,7 @@
 """Parameterized MCP agent.
 
 Reads AGENT_ROLE from env and calls the combined postgresql-mcp through
-Catalyst's MCP proxy endpoint. The asyncgen exception handler captures
+Diagrid's MCP proxy endpoint. The asyncgen exception handler captures
 HTTP errors that surface during MCPStreamableHTTPTool shutdown.
 """
 

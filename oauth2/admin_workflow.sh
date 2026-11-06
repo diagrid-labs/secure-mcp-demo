@@ -25,12 +25,12 @@ echo " Admin destructive workflow — end-to-end"
 echo "============================================"
 
 echo ""
-printf "${BOLD}>>> Fetching admin's Catalyst token...${RESET}\n"
+printf "${BOLD}>>> Fetching admin's Diagrid token...${RESET}\n"
 export DAPR_HTTP_ENDPOINT=$(diagrid project get "$PROJECT" -o json | \
     uv run python -c "import json,sys;print(json.load(sys.stdin)['status']['endpoints']['http']['url'])")
 export DAPR_API_TOKEN=$(diagrid appid get admin-mcp-client --project "$PROJECT" -o json | \
     uv run python -c "import json,sys;print(json.load(sys.stdin)['status']['apiToken'])")
-printf "    ${DIM}Catalyst endpoint: $DAPR_HTTP_ENDPOINT${RESET}\n"
+printf "    ${DIM}Diagrid endpoint: $DAPR_HTTP_ENDPOINT${RESET}\n"
 printf "    ${DIM}Admin token:       ${DAPR_API_TOKEN:0:10}...${RESET}\n"
 
 # Clear any stray row from a prior run that inserted but failed to delete
@@ -55,7 +55,7 @@ _show_employees
 
 echo ""
 printf "${BOLD}>>> Admin deletes Demo Target via postgresql-mcp (delete_employee)...${RESET}\n"
-printf "    ${DIM}(requires Catalyst ACL allow + Catalyst's own OAuth2 auth)${RESET}\n"
+printf "    ${DIM}(requires Diagrid ACL allow + Diagrid's own OAuth2 auth)${RESET}\n"
 DELETE_RESP=$(uv run python oauth2/admin_workflow.py delete "$NEW_ID")
 echo "    $DELETE_RESP"
 
@@ -66,6 +66,6 @@ _show_employees
 echo ""
 echo "============================================"
 echo " Both operations succeeded. Database state is restored."
-echo " - Catalyst ACL allowed admin, and Catalyst's own JWT satisfied"
+echo " - Diagrid ACL allowed admin, and Diagrid's own JWT satisfied"
 echo "   postgresql-mcp's verification — both gates passed for each call."
 echo "============================================"
