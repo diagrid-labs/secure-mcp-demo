@@ -1,10 +1,10 @@
 """Matrix probe: deterministic (no LLM) verification harness.
 
-For the role in AGENT_ROLE, calls each tool via Catalyst's MCP proxy and
-prints a ✓/✗ row. Catalyst enforces per-tool access (403 if denied); each
+For the role in AGENT_ROLE, calls each tool via Diagrid's MCP proxy and
+prints a ✓/✗ row. Diagrid enforces per-tool access (403 if denied); each
 probe opens its own session so one denial doesn't abort the rest.
 
-A 401 means Catalyst's own OAuth2 auth isn't configured on the MCPServer
+A 401 means Diagrid's own OAuth2 auth isn't configured on the MCPServer
 resource (./oauth2/setup.sh) — the agent never handles a JWT itself.
 """
 
@@ -45,7 +45,7 @@ def _why(exc, _seen=None):
     if status:
         return f"HTTP {status}"
 
-    # Catalyst proxies a postgresql-mcp-side HTTP error as an MCP-protocol
+    # Diagrid proxies a postgresql-mcp-side HTTP error as an MCP-protocol
     # error, not a raw HTTP response — surfaces as McpError("upstream HTTP 401: ...").
     match = re.search(r"HTTP (\d{3})", str(exc))
     if match:
@@ -85,7 +85,7 @@ RESET = "\033[0m"
 
 
 async def main():
-    print(f"\n{BOLD}[{AGENT_ROLE}-mcp-client]{RESET} probing postgresql-mcp via Catalyst")
+    print(f"\n{BOLD}[{AGENT_ROLE}-mcp-client]{RESET} probing postgresql-mcp via Diagrid")
     rows = []
     for tool, args in PROBES:
         ok, why = await probe_one(tool, args)

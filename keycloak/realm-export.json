@@ -7,7 +7,7 @@
   "clients": [
     {
       "clientId": "catalyst-proxy",
-      "name": "Catalyst MCP proxy (Catalyst's own service identity)",
+      "name": "Diagrid MCP proxy (Diagrid's own service identity)",
       "enabled": true,
       "secret": "catalyst-proxy-secret",
       "clientAuthenticatorType": "client-secret",

@@ -22,7 +22,7 @@ services:
     environment:
       KEYCLOAK_ADMIN: admin
       KEYCLOAK_ADMIN_PASSWORD: admin
-      # KC_HOSTNAME_URL must match the URL Catalyst's middleware fetches the
+      # KC_HOSTNAME_URL must match the URL Diagrid's middleware fetches the
       # JWKS from — this also becomes the `iss` claim Keycloak stamps on
       # tokens. Defaults to localhost; override with
       # `export KC_HOSTNAME_URL=https://...ngrok-url...` before

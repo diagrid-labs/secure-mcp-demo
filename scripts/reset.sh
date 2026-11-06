@@ -2,7 +2,7 @@
 # Stop all dev sessions for this project's app-ids and kill any orphaned
 # local server process still bound to the MCP server port. Run before
 # `diagrid dev run -f dev.yaml` if you see stale-tunnel 502s or
-# "address already in use" at startup. Doesn't touch Catalyst resources.
+# "address already in use" at startup. Doesn't touch Diagrid resources.
 
 set -uo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

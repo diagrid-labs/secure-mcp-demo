@@ -1,32 +1,32 @@
-# Catalyst integration — Cloud + nginx-ingress
+# Diagrid integration — Cloud + nginx-ingress
 
-Catalyst Cloud hosts the Dapr runtime centrally. Per
+Diagrid Cloud hosts the Dapr runtime centrally. Per
 <https://docs.diagrid.io/develop/connect>, your apps don't run any
-in-cluster sidecar — they expose an HTTP endpoint and Catalyst forwards
+in-cluster sidecar — they expose an HTTP endpoint and Diagrid forwards
 inbound MCP calls to it. This chart uses the **MCPServer resource** model:
-a single `postgresql-mcp` app handles all tools, and Catalyst's MCP proxy
+a single `postgresql-mcp` app handles all tools, and Diagrid's MCP proxy
 routes calls after enforcing the per-tool access policy.
 
 ## Trust model
 
 The MCP server is on a `ClusterIP` Service — not directly reachable from
 outside. The only public surface is the **nginx-ingress controller's
-LoadBalancer**, and that LB is locked to **Catalyst Cloud's project
+LoadBalancer**, and that LB is locked to **Diagrid Cloud's project
 Egress Address** via `loadBalancerSourceRanges`. Anyone else hitting the
 public URL is rejected at the Azure network layer before reaching the
 ingress controller.
 
 | Layer | What it gates |
 |---|---|
-| Azure network (`loadBalancerSourceRanges` on nginx-ingress LB) | non-Catalyst IPs |
-| Catalyst App Id (token verification at Catalyst's edge) | bearer-token (`dapr-api-token`) presence + validity |
+| Azure network (`loadBalancerSourceRanges` on nginx-ingress LB) | non-Diagrid IPs |
+| Diagrid App Id (token verification at Diagrid's edge) | bearer-token (`dapr-api-token`) presence + validity |
 | MCPServer access policy | per-tool allow/deny per calling app-id |
-| Keycloak JWT verification in `postgresql-mcp` itself (mandatory, always on) | Checked in application code (`servers/postgresql_mcp.py`, via the MCP SDK's `TokenVerifier`) — there's no Dapr sidecar for an MCPServer-resource-managed app-id, so this can't be a platform-level Component/Configuration. Per <https://docs.diagrid.io/develop/mcp/mcp-authentication#oauth-20-client-credentials>, the JWT itself is **Catalyst's own** — fetched via OAuth2 client-credentials configured on the MCPServer resource (`./oauth2/setup.sh`), not presented by the calling agent |
+| Keycloak JWT verification in `postgresql-mcp` itself (mandatory, always on) | Checked in application code (`servers/postgresql_mcp.py`, via the MCP SDK's `TokenVerifier`) — there's no Dapr sidecar for an MCPServer-resource-managed app-id, so this can't be a platform-level Component/Configuration. Per <https://docs.diagrid.io/develop/mcp/mcp-authentication#oauth-20-client-credentials>, the JWT itself is **Diagrid's own** — fetched via OAuth2 client-credentials configured on the MCPServer resource (`./oauth2/setup.sh`), not presented by the calling agent |
 | Postgres role-scoped DB users | last line of defense — caps what each tool can actually execute |
 
 > **Important caveat:** the Keycloak path `/keycloak/*` is also behind the
-> same allowlist. Catalyst needs to fetch `/keycloak/realms/.../certs`
-> (JWKS), so Catalyst's egress IPs must be allowed. Your operator browser
+> same allowlist. Diagrid needs to fetch `/keycloak/realms/.../certs`
+> (JWKS), so Diagrid's egress IPs must be allowed. Your operator browser
 > wanting to reach the UI at `/` ALSO has to come from an allowlisted IP.
 > Either add your office/VPN egress to `CATALYST_EGRESS_CIDRS`, or access
 > the UI via `kubectl port-forward` instead.
@@ -101,9 +101,9 @@ diagrid mcpserver get postgresql-mcp --project secure-mcp-demo -o json | jq '.st
 | keycloak      | `/keycloak`              | passthrough (Keycloak runs with `KC_HTTP_RELATIVE_PATH=/keycloak`) |
 | postgresql-mcp | `/mcp`                   | rewrite to `/mcp` upstream |
 
-Callers never hit these paths directly. Catalyst's MCP proxy endpoint
-(`/v1.0/diagrid/mcp/postgresql-mcp` on the Catalyst HTTP endpoint) is the
-only entry point. Catalyst reads the MCPServer resource's
+Callers never hit these paths directly. Diagrid's MCP proxy endpoint
+(`/v1.0/diagrid/mcp/postgresql-mcp` on the Diagrid HTTP endpoint) is the
+only entry point. Diagrid reads the MCPServer resource's
 `spec.endpoint.streamableHTTP.url` and proxies to
 `http://securemcp.eastus.cloudapp.azure.com/mcp`.
 
@@ -113,7 +113,7 @@ only entry point. Catalyst reads the MCPServer resource's
 diagrid project get $DIAGRID_PROJECT -o json | jq '.status'
 ```
 
-The Catalyst Console at <https://catalyst.r1.diagrid.io/> also shows it
+The Diagrid Console at <https://catalyst.r1.diagrid.io/> also shows it
 under the project's **Connectivity** or **Security** section.
 
 ## Skipping the allowlist for a quick test

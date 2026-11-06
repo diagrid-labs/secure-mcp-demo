@@ -322,7 +322,7 @@ def policy_configured() -> dict:
 
     # JWT middleware: postgresql-mcp always requires a bearer JWT (Dapr bearer
     # middleware applied once by ../setup.sh — not toggled). What's actually
-    # toggled here is whether Catalyst itself is configured to fetch and
+    # toggled here is whether Diagrid itself is configured to fetch and
     # attach its own JWT: spec.endpoint.streamableHTTP.auth.oauth2 on the
     # MCPServer resource (see ../oauth2/setup.sh). Without it, nothing
     # attaches a JWT and every call 401s regardless of the ACL matrix above.
@@ -371,7 +371,7 @@ def policy_configured() -> dict:
 
 @app.post("/api/policy/apply")
 def policy_apply(payload: dict = Body(...)) -> dict:
-    """Apply a full editor matrix + JWT middleware state to Catalyst.
+    """Apply a full editor matrix + JWT middleware state to Diagrid.
 
     Body shape:
         {
@@ -419,7 +419,7 @@ def policy_apply(payload: dict = Body(...)) -> dict:
 
 
 def _apply_jwt_middleware(jwt_on: bool) -> None:
-    """Add or remove Catalyst's own OAuth2 client-credentials auth on the
+    """Add or remove Diagrid's own OAuth2 client-credentials auth on the
     MCPServer resource (see ../oauth2/setup.sh / teardown.sh). postgresql-mcp's
     bearer middleware always requires a JWT (baseline, set once by
     ../setup.sh) — this is what actually supplies one. Preserves the
@@ -460,7 +460,7 @@ def _apply_jwt_middleware(jwt_on: bool) -> None:
             "          scopes: []\n"
             f"          clientSecret: {client_secret}\n"
         )
-    # else: omitting `auth` entirely removes Catalyst's OAuth2 config —
+    # else: omitting `auth` entirely removes Diagrid's OAuth2 config —
     # nothing attaches a JWT, so every call 401s at the bearer middleware.
 
     with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
@@ -478,9 +478,9 @@ def _apply_jwt_middleware(jwt_on: bool) -> None:
 @app.post("/api/jwt-preview")
 def jwt_preview() -> dict:
     """Independently perform a client_credentials grant against Keycloak
-    using the same catalyst-proxy client Catalyst itself uses server-side
-    (see _apply_jwt_middleware above). This is NOT the token Catalyst
-    attaches to any given /api/invoke call — Catalyst mints and attaches
+    using the same catalyst-proxy client Diagrid itself uses server-side
+    (see _apply_jwt_middleware above). This is NOT the token Diagrid
+    attaches to any given /api/invoke call — Diagrid mints and attaches
     its own token internally, invisible to this backend. This endpoint
     exists purely to fetch and show an illustrative, real JWT for the same
     client identity — same issuer/audience/client, distinct token instance.
@@ -565,7 +565,7 @@ def _extract_status(exc: BaseException, _seen: set | None = None) -> int | None:
     code = getattr(resp, "status_code", None)
     if code:
         return code
-    # Catalyst proxies a postgresql-mcp-side HTTP error (e.g. our own bearer
+    # Diagrid proxies a postgresql-mcp-side HTTP error (e.g. our own bearer
     # JWT rejection) as an MCP-protocol-level error, not a raw HTTP
     # response — surfaces as McpError("upstream HTTP 401: ...").
     match = re.search(r"HTTP (\d{3})", str(exc))
@@ -643,7 +643,7 @@ async def invoke(payload: dict = Body(...)) -> dict:
     verb = VERB_OF[op]
 
     # postgresql-mcp always requires a bearer JWT, verified in its own
-    # application code (servers/postgresql_mcp.py). It's Catalyst's own job to
+    # application code (servers/postgresql_mcp.py). It's Diagrid's own job to
     # attach one, via OAuth2 client-credentials configured on the MCPServer
     # resource (../oauth2/setup.sh) — this backend, like any caller, never
     # fetches or presents a JWT itself. Report the current global state for
@@ -686,10 +686,10 @@ async def invoke(payload: dict = Body(...)) -> dict:
         saw = False
         if status == 401:
             kind = "jwt-deny"
-            reason = "Catalyst's own OAuth2 auth isn't configured on the MCPServer resource yet"
+            reason = "Diagrid's own OAuth2 auth isn't configured on the MCPServer resource yet"
         elif status == 403:
             kind = "acl-deny"
-            reason = f"Catalyst ACL denied {role}-mcp-client tool: {tool}"
+            reason = f"Diagrid ACL denied {role}-mcp-client tool: {tool}"
         else:
             kind = "acl-deny"
             reason = f"unexpected status {status}"
@@ -715,11 +715,11 @@ async def invoke(payload: dict = Body(...)) -> dict:
 
 
 # ─── Spoofs (Phase 4) ─────────────────────────────────────────────────────
-# Adversarial scenarios: fire real malicious HTTP against Catalyst and
+# Adversarial scenarios: fire real malicious HTTP against Diagrid and
 # return the same result shape the Result panel renders.
 #
 # no-jwt-delete / bad-jwt-delete are gone: those simulated a CALLER
-# presenting no/malformed JWT, which no longer means anything — Catalyst
+# presenting no/malformed JWT, which no longer means anything — Diagrid
 # attaches its own JWT (or doesn't) via the MCPServer resource's OAuth2
 # config, independent of what any caller does. There's nothing left for a
 # caller to spoof at that layer.
@@ -777,7 +777,7 @@ async def spoof(payload: dict = Body(...)) -> dict:
         role = "analyst"
         op = "delete"
         verb_label = "delete_employee"
-        reason_template = "Catalyst ACL denied analyst-mcp-client tool: delete_employee"
+        reason_template = "Diagrid ACL denied analyst-mcp-client tool: delete_employee"
         mcp_headers = {"dapr-api-token": analyst_token}
 
         status = 200
@@ -813,10 +813,10 @@ async def spoof(payload: dict = Body(...)) -> dict:
             "method": "POST",
         }
 
-    # Remaining spoofs use raw HTTP (they target Catalyst's edge, above
+    # Remaining spoofs use raw HTTP (they target Diagrid's edge, above
     # tool-level ACL). Note a 401 here means the *dapr-api-token* was
-    # rejected at Catalyst's edge — a different 401 than the one postgresql-mcp's
-    # bearer middleware returns when Catalyst's own OAuth2 auth isn't
+    # rejected at Diagrid's edge — a different 401 than the one postgresql-mcp's
+    # bearer middleware returns when Diagrid's own OAuth2 auth isn't
     # configured (see ../oauth2/setup.sh / DEMO.md's step-up beat).
     if kind == "no-token":
         reason_template = "no bearer token presented"

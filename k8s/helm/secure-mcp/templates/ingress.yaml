@@ -10,7 +10,7 @@
   per-Ingress, and we want different rewriting behavior for the MCP
   path (strip to /mcp) vs the keycloak + UI paths (preserve prefix).
 
-  The Catalyst egress allowlist applies to the nginx-ingress controller's
+  The Diagrid egress allowlist applies to the nginx-ingress controller's
   Service in the ingress-nginx namespace — NOT here. See k8s/README.md.
 */ -}}
 {{- if .Values.ingress.enabled }}

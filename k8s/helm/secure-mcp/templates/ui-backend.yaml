@@ -31,7 +31,7 @@ spec:
             - name: http
               containerPort: {{ .Values.ui.port }}
           env:
-            # Catalyst — used by the `diagrid` CLI (control plane) and
+            # Diagrid — used by the `diagrid` CLI (control plane) and
             # by the data-plane invoke path. DAPR_HTTP_ENDPOINT is the
             # standard Dapr SDK env var; we read it in main.py instead of
             # shelling out for `diagrid project get` on every call.
@@ -77,11 +77,11 @@ spec:
                   key: present
                   optional: true
 
-            # Catalyst's own OAuth2 client-credentials (Catalyst -> postgresql-mcp).
+            # Diagrid's own OAuth2 client-credentials (Diagrid -> postgresql-mcp).
             # ui_backend's step-up toggle (POST /api/policy/apply) uses these
-            # to configure/remove Catalyst's own OAuth2 auth on the MCPServer
+            # to configure/remove Diagrid's own OAuth2 auth on the MCPServer
             # resource — see oauth2/setup.sh and README.md's "OIDC / bearer
-            # middleware". Must be Catalyst's cloud-reachable public URL, not
+            # middleware". Must be Diagrid's cloud-reachable public URL, not
             # an in-cluster address. ui_backend also calls Keycloak directly
             # with these same values (POST /api/jwt-preview) to fetch an
             # illustrative JWT for display — never used for real auth, purely

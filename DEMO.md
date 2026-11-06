@@ -1,6 +1,6 @@
 # DEMO.md — demo walkthrough
 
-Shows Catalyst's per-tool access policy governing calls to the single
+Shows Diagrid's per-tool access policy governing calls to the single
 `postgresql-mcp` MCP server, across three roles — analyst, ops, admin.
 
 Two ways to run it, same underlying policy either way:
@@ -16,7 +16,7 @@ environment bring-up (Postgres, Keycloak, ngrok), see README.md's
 ## Setup (once)
 
 Both walkthroughs assume the stack is running with the canonical ACL
-matrix granted and Catalyst's own OAuth2 auth turned on:
+matrix granted and Diagrid's own OAuth2 auth turned on:
 
 ```bash
 ./scripts/setup.sh   # Catalyst project, app-ids, MCPServer resource
@@ -40,7 +40,7 @@ k8s: the ingress URL from `k8s/CATALYST.md`).
 
 1. **Query as analyst** — select `analyst`, click `Query`. Succeeds (`200`).
 2. **Write as analyst** — click `Write` (calls `insert_employee`). Fails
-   (`403`). Check Catalyst's API logs for the call — status `Forbidden`,
+   (`403`). Check Diagrid's API logs for the call — status `Forbidden`,
    since analyst isn't granted `insert_employee`.
 3. **Write as ops** — switch to `ops`, click `Write`. Succeeds — a "Demo
    Target" employee is inserted.
@@ -51,7 +51,7 @@ k8s: the ingress URL from `k8s/CATALYST.md`).
 
 ## CLI walkthrough
 
-Same policy, checked directly against Catalyst's control plane — no MCP
+Same policy, checked directly against Diagrid's control plane — no MCP
 call is actually made, so nothing in the database changes:
 
 ```bash

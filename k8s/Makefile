@@ -3,7 +3,7 @@
 # `make install-ingress`    — install ingress-nginx with the Azure DNS label
 # `make install`            — install the secure-mcp chart
 # `make agent-tokens`       — cache agent App ID tokens in a Kubernetes Secret
-# `make register-appids`    — point Catalyst at each MCP server's path
+# `make register-appids`    — point Diagrid at each MCP server's path
 # `make build-images`       — build the two Docker images
 # `make push-images`        — push to $REGISTRY
 # `make uninstall`          — helm uninstall
@@ -24,7 +24,7 @@ CATALYST_HTTP_ENDPOINT ?=
 CATALYST_GRPC_ENDPOINT ?=
 HELM_FORCE_CONFLICTS ?= false
 HELM_TIMEOUT ?= 15m
-# Catalyst's project egress IPs. Comma-separated. Applied to the
+# Diagrid's project egress IPs. Comma-separated. Applied to the
 # nginx-ingress controller Service via `make install-ingress`.
 CATALYST_EGRESS_CIDRS ?=
 
@@ -79,8 +79,8 @@ help:
 	@echo "  make lint             helm lint"
 	@echo "  make render           helm template (preview without installing)"
 	@echo "  make install          helm upgrade --install the secure-mcp chart"
-	@echo "  make agent-tokens     cache Catalyst agent tokens in a Secret"
-	@echo "  make register-appids  point Catalyst at each MCP server's path"
+	@echo "  make agent-tokens     cache Diagrid agent tokens in a Secret"
+	@echo "  make register-appids  point Diagrid at each MCP server's path"
 	@echo "  make fqdns            print the public URLs of every service"
 	@echo "  make uninstall        helm uninstall + delete namespace"
 	@echo "  make uninstall-ingress  uninstall nginx-ingress"
@@ -129,8 +129,8 @@ lint: deps
 
 # ── ingress-nginx install ─────────────────────────────────────────────────
 # One Azure LB fronting nginx-ingress. The DNS label gives the predictable
-# FQDN baked into KC_HOSTNAME_URL + the Catalyst app-endpoint registrations.
-# The Catalyst egress allowlist is applied here, on the controller Service —
+# FQDN baked into KC_HOSTNAME_URL + the Diagrid app-endpoint registrations.
+# The Diagrid egress allowlist is applied here, on the controller Service —
 # one place to keep in sync.
 install-ingress:
 	helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx 2>/dev/null || true
@@ -149,7 +149,7 @@ uninstall-ingress:
 	-kubectl delete namespace ingress-nginx
 
 # ── secure-mcp chart install ──────────────────────────────────────────────
-# Catalyst data-plane endpoints are looked up inside the install target
+# Diagrid data-plane endpoints are looked up inside the install target
 # (single diagrid call, jq twice, no make-parse-time double-invocation).
 
 # When DOCKERHUB_USERNAME is set, plumb `regcred` into our chart + the
@@ -192,7 +192,7 @@ agent-tokens:
 	  echo "WARNING: DIAGRID_API_KEY is not set — skipping catalyst-mcp-client-tokens Secret"; \
 	  echo "         UI backend will fall back to diagrid CLI lookup at runtime."; \
 	else \
-	  echo ">>> Creating/updating Catalyst agent token Secret"; \
+	  echo ">>> Creating/updating Diagrid agent token Secret"; \
 	  ANALYST_TOKEN=$$(diagrid appid get analyst-mcp-client --project $(DIAGRID_PROJECT) -o json | jq -r '.status.apiToken // empty') ; \
 	  OPS_TOKEN=$$(diagrid appid get ops-mcp-client --project $(DIAGRID_PROJECT) -o json | jq -r '.status.apiToken // empty') ; \
 	  ADMIN_TOKEN=$$(diagrid appid get admin-mcp-client --project $(DIAGRID_PROJECT) -o json | jq -r '.status.apiToken // empty') ; \
@@ -227,7 +227,7 @@ install: deps
 	elif [ -n "$(DOCKERHUB_USERNAME)" ] && [ -z "$(DOCKERHUB_PAT)" ]; then \
 	  echo "WARNING: DOCKERHUB_USERNAME set but DOCKERHUB_PAT missing — skipping regcred Secret"; \
 	fi
-	@echo ">>> Resolving Catalyst data-plane endpoints from diagrid project get"
+	@echo ">>> Resolving Diagrid data-plane endpoints from diagrid project get"
 	@PROJECT_JSON=$$(diagrid project get $(DIAGRID_PROJECT) -o json 2>/dev/null || true) ; \
 	HTTP_EP="$(CATALYST_HTTP_ENDPOINT)" ; \
 	GRPC_EP="$(CATALYST_GRPC_ENDPOINT)" ; \
@@ -248,14 +248,14 @@ install: deps
 	@echo "Then run:  make register-appids"
 
 register-appids:
-	@echo ">>> Applying MCPServer resource with production FQDN to Catalyst"
+	@echo ">>> Applying MCPServer resource with production FQDN to Diagrid"
 	@TMP=$$(mktemp /tmp/secure-mcp-mcpserver-XXXXXX.yaml); \
 	sed 's|http://localhost:8001/mcp|http://$(INGRESS_FQDN)/mcp|g' \
 	  $(REPO_ROOT)/resources/postgresql-mcp.yaml > "$$TMP"; \
 	diagrid apply --project $(DIAGRID_PROJECT) -f "$$TMP"; \
 	rm -f "$$TMP"
 	@echo ""
-	@echo "Verify Catalyst → app reachability:"
+	@echo "Verify Diagrid → app reachability:"
 	@echo "  diagrid mcpserver get postgresql-mcp --project $(DIAGRID_PROJECT) -o json | jq '.status'"
 
 uninstall:

@@ -1,7 +1,7 @@
 version: 1
 
 # The MCPServer resource in ./resources/postgresql-mcp.yaml registers this
-# app with Catalyst so callers reach it via /v1.0/diagrid/mcp/postgresql-mcp.
+# app with Diagrid so callers reach it via /v1.0/diagrid/mcp/postgresql-mcp.
 
 common:
   resourcesPath: ./resources

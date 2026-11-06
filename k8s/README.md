@@ -43,7 +43,7 @@ sits on ClusterIP Services behind that single LB; nginx routes by path:
 
 Key benefits of the one-LB approach:
 - One Azure LB to pay for / monitor (not five)
-- One DNS label and one place to keep the Catalyst egress allowlist
+- One DNS label and one place to keep the Diagrid egress allowlist
 - One spot to add TLS later (cert-manager + Let's Encrypt) when a real
   domain is available
 
@@ -74,7 +74,7 @@ k8s/
 ## Known tech debt
 
 - **UI backend image bundles the `diagrid` CLI** rather than calling the
-  Catalyst REST API directly. Convenient (the local-dev codepath ports
+  Diagrid REST API directly. Convenient (the local-dev codepath ports
   unchanged) but pulls a CLI binary into the image and requires
   `DIAGRID_API_KEY` to be available to the pod. Future cleanup: swap
   `subprocess.run` calls in `ui_backend/main.py` for `httpx` against
@@ -192,9 +192,9 @@ make uninstall
 make install
 ```
 
-### Catalyst agent token cache
+### Diagrid agent token cache
 
-The UI backend can invoke Catalyst as analyst, ops, or admin. It reads those
+The UI backend can invoke Diagrid as analyst, ops, or admin. It reads those
 App ID tokens from an optional Secret named `catalyst-mcp-client-tokens`:
 
 ```text
@@ -228,7 +228,7 @@ slower and noisier during demos.
 | `RELEASE`               | `secure-mcp`         | Helm release name |
 | `INGRESS_DNS_LABEL`     | `securemcp`          | Azure DNS label (must be unique within region) |
 | `AZURE_REGION`          | `eastus`             | Azure region for the FQDN |
-| `DIAGRID_PROJECT`       | `secure-mcp-demo`    | Catalyst project name |
+| `DIAGRID_PROJECT`       | `secure-mcp-demo`    | Diagrid project name |
 | `DIAGRID_API_KEY`       | _(unset)_            | If set, creates `catalyst-api-key` Secret |
 | `CATALYST_EGRESS_CIDRS` | _(unset)_            | Comma-separated CIDRs → LB `loadBalancerSourceRanges` |
 
@@ -243,7 +243,7 @@ and we use path-based routing (because we don't have a real domain yet)
 instead of hostname-based. Future: when a domain is in place, swap to
 hostname routing + cert-manager TLS.
 
-## Catalyst integration
+## Diagrid integration
 
 See [CATALYST.md](./CATALYST.md). TL;DR: each MCP server's app-endpoint
 URL is `http://<ingress-fqdn>/mcp/<op>`. `make register-appids` runs the
